@@ -1,12 +1,9 @@
 """Preprocess yield curves for train/val/test and model ingestion."""
 
-from __future__ import annotations
-
 import argparse
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Tuple
 
 import numpy as np
 import pandas as pd
@@ -27,7 +24,7 @@ class SplitData:
     test: pd.DataFrame
 
 
-def align_and_impute(df: pd.DataFrame) -> pd.DataFrame:
+def align_and_impute(df):
     """Align maturities and fill missing values with robust policy."""
     out = df.copy()
     out.index = pd.to_datetime(out.index)
@@ -43,7 +40,7 @@ def align_and_impute(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def chronological_split(df: pd.DataFrame, train_ratio: float, val_ratio: float) -> SplitData:
+def chronological_split(df, train_ratio, val_ratio):
     """Chronological split without leakage."""
     if not (0.0 < train_ratio < 1.0 and 0.0 < val_ratio < 1.0):
         raise ValueError("train_ratio and val_ratio must be between 0 and 1.")
@@ -59,9 +56,7 @@ def chronological_split(df: pd.DataFrame, train_ratio: float, val_ratio: float) 
     return SplitData(train=train, val=val, test=test)
 
 
-def robust_scale(
-    train: pd.DataFrame, val: pd.DataFrame, test: pd.DataFrame
-) -> Tuple[Dict[str, pd.DataFrame], Dict[str, pd.Series]]:
+def robust_scale(train, val, test):
     """Scale by train-only robust statistics (median/IQR style)."""
     median = train.median(axis=0)
     iqr = (train.quantile(0.75) - train.quantile(0.25)).replace(0.0, 1.0)
@@ -74,7 +69,7 @@ def robust_scale(
     return scaled, stats
 
 
-def apply_levelscript(curves: np.ndarray, level_tenor_index: int = 3) -> Tuple[np.ndarray, np.ndarray]:
+def apply_levelscript(curves, level_tenor_index=3):
     """Optional decomposition into shape + level.
 
     Inputs:
@@ -88,7 +83,7 @@ def apply_levelscript(curves: np.ndarray, level_tenor_index: int = 3) -> Tuple[n
     return shape, level
 
 
-def _save_frame(df: pd.DataFrame, path: Path) -> None:
+def _save_frame(df, path):
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.suffix.lower() == ".parquet":
         df.to_parquet(path, index=True)
@@ -96,7 +91,7 @@ def _save_frame(df: pd.DataFrame, path: Path) -> None:
         df.to_csv(path, index=True)
 
 
-def _print_summary(name: str, df: pd.DataFrame) -> None:
+def _print_summary(name, df):
     print(f"=== {name} ===")
     print(f"Rows: {len(df):,} | Cols: {df.shape[1]}")
     if len(df) > 0:
@@ -104,7 +99,7 @@ def _print_summary(name: str, df: pd.DataFrame) -> None:
     print(f"Any NA: {df.isna().any().any()}")
 
 
-def main() -> None:
+def main():
     """CLI for cleaning/splitting/scaling raw FRED data."""
     parser = argparse.ArgumentParser(description="Preprocess yield-curve panel.")
     parser.add_argument("--input-path", default="data/raw/fred_yields.csv", help="Input raw data path.")
