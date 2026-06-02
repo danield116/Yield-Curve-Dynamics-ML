@@ -1,0 +1,19 @@
+# Python cache/artifacts
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+
+# Generated data outputs from pipeline
+yield-curve-geometric-sde/data/raw/
+yield-curve-geometric-sde/data/processed/
