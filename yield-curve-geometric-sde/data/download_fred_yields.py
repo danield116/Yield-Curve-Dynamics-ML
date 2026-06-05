@@ -10,6 +10,10 @@ from pathlib import Path
 import pandas as pd
 
 
+# Earliest date where all MVP tenors (incl. 1M) are available on FRED.
+DEFAULT_START_DATE = "2001-07-01"
+
+
 FRED_SERIES_MAP = {
     "1M": "DGS1MO",
     "3M": "DGS3MO",
@@ -96,7 +100,7 @@ def print_data_summary(df):
 def main():
     """CLI entrypoint."""
     parser = argparse.ArgumentParser(description="Download U.S. Treasury yields from FRED.")
-    parser.add_argument("--start-date", default="1990-01-01", help="Inclusive start date (YYYY-MM-DD).")
+    parser.add_argument("--start-date", default=DEFAULT_START_DATE, help="Inclusive start date (YYYY-MM-DD).")
     parser.add_argument("--end-date", default=pd.Timestamp.today().strftime("%Y-%m-%d"), help="Inclusive end date (YYYY-MM-DD).")
     parser.add_argument(
         "--tenors",

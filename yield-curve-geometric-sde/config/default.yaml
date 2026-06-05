@@ -4,6 +4,8 @@ project:
 
 data:
   source: fred
+  start_date: "2001-07-01"
+  drop_incomplete_rows: true
   tenors: ["1M", "3M", "6M", "1Y", "2Y", "3Y", "5Y", "7Y", "10Y", "20Y", "30Y"]
   train_ratio: 0.7
   val_ratio: 0.15

@@ -24,17 +24,33 @@ class SplitData:
     test: pd.DataFrame
 
 
-def align_and_impute(df):
-    """Align maturities and fill missing values with robust policy."""
+def align_and_impute(df, drop_incomplete_rows=True):
+    """Align maturities and fill only small calendar gaps.
+
+    Policy:
+    1) Drop rows with any missing tenor (avoids synthetic long-history fills).
+    2) Reindex to business days.
+    3) Interpolate short weekday gaps, then ffill/bfill edge gaps.
+    """
     out = df.copy()
     out.index = pd.to_datetime(out.index)
     out = out.sort_index()
+
+    if drop_incomplete_rows:
+        complete = out.dropna(how="any")
+        dropped = len(out) - len(complete)
+        if dropped > 0:
+            print(f"Dropped {dropped:,} incomplete rows ({dropped / max(len(out), 1):.2%} of raw panel).")
+        out = complete
+
+    if out.empty:
+        raise ValueError("No complete rows remain after dropping incomplete data.")
 
     # Reindex to business-day calendar to create a consistent panel.
     full_bday_index = pd.date_range(start=out.index.min(), end=out.index.max(), freq="B")
     out = out.reindex(full_bday_index)
 
-    # Fill gaps with time interpolation first, then directional carries.
+    # Fill only short missing-business-day gaps.
     out = out.interpolate(method="time", limit_direction="both")
     out = out.ffill().bfill()
     return out
@@ -106,6 +122,12 @@ def main():
     parser.add_argument("--output-dir", default="data/processed", help="Folder for processed outputs.")
     parser.add_argument("--train-ratio", type=float, default=0.70, help="Chronological training ratio.")
     parser.add_argument("--val-ratio", type=float, default=0.15, help="Chronological validation ratio.")
+    parser.add_argument(
+        "--drop-incomplete-rows",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Drop rows with any missing tenor before imputing small weekday gaps.",
+    )
     parser.add_argument("--levelscript", action="store_true", help="Save shape/level decompositions.")
     parser.add_argument(
         "--level-tenor-index",
@@ -124,7 +146,7 @@ def main():
     else:
         raw_df = pd.read_csv(input_path, index_col=0, parse_dates=True)
 
-    clean_df = align_and_impute(raw_df)
+    clean_df = align_and_impute(raw_df, drop_incomplete_rows=args.drop_incomplete_rows)
     split = chronological_split(clean_df, train_ratio=args.train_ratio, val_ratio=args.val_ratio)
     scaled, stats = robust_scale(split.train, split.val, split.test)
 
