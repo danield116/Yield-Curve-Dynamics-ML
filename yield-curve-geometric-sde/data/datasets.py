@@ -1,8 +1,5 @@
-"""PyTorch dataset utilities for yield-curve training.
+"""PyTorch dataset into tensors for yield-curve training.
 
-Style note:
-- Keeps the same behavior/API as before.
-- Uses a more notebook-like, direct style for readability.
 """
 
 from dataclasses import dataclass
@@ -25,9 +22,7 @@ def _read_frame(path):
 
 @dataclass
 class SplitTensors:
-    """Container with one tensor per split.
-
-    Shapes:
+    """one tensor per split
     - train: [T_train, N_tenors]
     - val:   [T_val, N_tenors]
     - test:  [T_test, N_tenors]
@@ -111,6 +106,56 @@ class YieldCurveWindowDataset(Dataset):
             "x_hist": self.curves[start:mid],  # [lookback, N]
             "y_fut": self.curves[mid:end],  # [horizon, N]
         }
+
+
+class LatentWindowDataset(Dataset):
+    """Sliding-window dataset over latent paths (+ curves for LevelScript decode).
+
+    Returns:
+    - z_hist: [lookback, latent_dim]
+    - z_fut:  [horizon, latent_dim]
+    - y_fut:  [horizon, N_tenors]  (for level conditioning / constraint decode)
+    """
+
+    def __init__(self, latents, curves, lookback=21, horizon=1):
+        if latents.shape[0] != curves.shape[0]:
+            raise ValueError("Latent and curve time dimensions must match.")
+        if lookback <= 0 or horizon <= 0:
+            raise ValueError("lookback and horizon must be positive integers.")
+
+        self.latents = latents
+        self.curves = curves
+        self.lookback = lookback
+        self.horizon = horizon
+        self.num_samples = latents.shape[0] - lookback - horizon + 1
+        if self.num_samples <= 0:
+            raise ValueError(
+                "Not enough time points for requested lookback/horizon. "
+                f"T={latents.shape[0]}, lookback={lookback}, horizon={horizon}."
+            )
+
+    def __len__(self):
+        return self.num_samples
+
+    def __getitem__(self, idx):
+        start = idx
+        mid = idx + self.lookback
+        end = mid + self.horizon
+        return {
+            "z_hist": self.latents[start:mid],
+            "z_fut": self.latents[mid:end],
+            "y_fut": self.curves[mid:end],
+        }
+
+
+def load_latent_splits(latent_dir):
+    """Load train/val/test latent tensors saved by Stage A."""
+    latent_path = Path(latent_dir)
+    return SplitTensors(
+        train=torch.load(latent_path / "train_latents.pt", map_location="cpu"),
+        val=torch.load(latent_path / "val_latents.pt", map_location="cpu"),
+        test=torch.load(latent_path / "test_latents.pt", map_location="cpu"),
+    )
 
 
 def maybe_add_levelscript_condition(curves, level_tenor_index=3):

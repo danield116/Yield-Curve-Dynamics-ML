@@ -11,6 +11,7 @@ data:
   val_ratio: 0.15
   test_ratio: 0.15
   use_levelscript: true
+  level_tenor_index: 3
 
 model:
   latent_dim: 3
@@ -22,8 +23,20 @@ training:
   epochs_stage_a: 100
   epochs_stage_b: 150
   learning_rate: 0.001
+  processed_dir: "data/processed"
+  checkpoint_dir: "reports/checkpoints/stage_a"
+  latent_dir: "reports/latents/stage_a"
+  stage_a_checkpoint: "reports/checkpoints/stage_a/stage_a_student_t_cvae_best.pt"
+  checkpoint_dir_stage_b: "reports/checkpoints/stage_b"
+  forecast_dir: "reports/forecasts/stage_b"
+  lookback: 21
+  horizon: 1
+  dt: 1.0
 
 constraints:
+  ablation: "sde_only"
+  projection_method: "reencode"
+  include_hessian: false
   pde_penalty_weight: 0.1
   jacobian_projection_weight: 0.1
   projection_eps: 1e-5

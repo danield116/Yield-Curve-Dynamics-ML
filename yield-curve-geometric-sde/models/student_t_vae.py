@@ -19,7 +19,17 @@ class StudentTCVAE(CVAE):
         self.log_scale_head = nn.Linear(hidden_dim, n_tenors)
         self.raw_nu = nn.Parameter(torch.tensor(2.0))
 
-    def student_t_nll(self, x: torch.Tensor, x_hat: torch.Tensor, log_scale: torch.Tensor) -> torch.Tensor:
+    def forward(self, x, c):
+        h = self.encoder(torch.cat([x, c], dim=-1))
+        mu = self.mu_head(h)
+        logvar = self.logvar_head(h)
+        std = torch.exp(0.5 * logvar)
+        z = mu + torch.randn_like(std) * std
+        x_hat = self.decode(z, c)
+        log_scale = self.log_scale_head(h)
+        return x_hat, mu, logvar, log_scale
+
+    def student_t_nll(self, x, x_hat, log_scale):
         """Placeholder Student-t NLL.
 
         Shapes:
