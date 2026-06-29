@@ -29,6 +29,38 @@ FRED_SERIES_MAP = {
 }
 
 
+def _normalize_fred_columns(series_df, series_id):
+    """Map FRED CSV headers to a stable date + value schema.
+
+    FRED has used both ``DATE`` and ``observation_date`` for the date column.
+    """
+    columns = {col.strip(): col for col in series_df.columns}
+    normalized = series_df.rename(columns={orig: key for key, orig in columns.items()})
+
+    date_col = None
+    for candidate in ("observation_date", "DATE", "date"):
+        if candidate in normalized.columns:
+            date_col = candidate
+            break
+
+    value_col = series_id if series_id in normalized.columns else None
+    if value_col is None:
+        # Some exports use a generic label when only one series is requested.
+        non_date_cols = [col for col in normalized.columns if col != date_col]
+        if len(non_date_cols) == 1:
+            value_col = non_date_cols[0]
+
+    if date_col is None or value_col is None:
+        raise ValueError(
+            f"Unexpected FRED response shape for series '{series_id}'. "
+            f"Columns received: {list(series_df.columns)}"
+        )
+
+    out = normalized[[date_col, value_col]].copy()
+    out = out.rename(columns={date_col: "date", value_col: series_id})
+    return out
+
+
 def _fetch_single_series(series_id, start_date, end_date):
     """Fetch one FRED time series from the public CSV endpoint.
 
@@ -37,13 +69,10 @@ def _fetch_single_series(series_id, start_date, end_date):
     """
     url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
     series_df = pd.read_csv(url)
+    series_df = _normalize_fred_columns(series_df, series_id)
 
-    if "DATE" not in series_df.columns or series_id not in series_df.columns:
-        raise ValueError(f"Unexpected FRED response shape for series '{series_id}'.")
-
-    series_df["DATE"] = pd.to_datetime(series_df["DATE"])
+    series_df["date"] = pd.to_datetime(series_df["date"])
     series_df[series_id] = pd.to_numeric(series_df[series_id], errors="coerce")
-    series_df = series_df.rename(columns={"DATE": "date"})
     series_df = series_df[(series_df["date"] >= start_date) & (series_df["date"] <= end_date)]
     return series_df[["date", series_id]]
 
