@@ -40,12 +40,17 @@ Stage B ablations (not separate models — same pipeline, different penalties):
 
 ## What is still TODO
 
-- [ ] `baselines/pca_var.py`, `baselines/nelson_siegel.py` — full implementations
-- [ ] `experiments/run_full_comparison.py` — orchestrate baselines + ablations + metrics
-- [ ] `evaluation/metrics.py` + `evaluation/arbitrage_diagnostics.py` — wire into reporting
-- [ ] Exact Student-t NLL in `models/student_t_vae.py` (currently placeholder)
-- [ ] Full PDE Hessian term (optional flag `include_hessian`, off by default)
-- [ ] Rolling backtests / multi-horizon eval report
+- [ ] Full PDE Hessian term tuning (optional flag `include_hessian`, off by default)
+- [ ] Optional `sde_activation` ablation flag (ReLU vs Tanh in SDE MLPs)
+
+## Recently completed
+
+- [x] Jacobian fix for LevelScript CVAE (`training/manifold_ops.py`)
+- [x] Exact Student-t NLL in `models/student_t_vae.py`
+- [x] `baselines/pca_var.py`, `baselines/nelson_siegel.py` (NSS / Nelson-Siegel-Svensson)
+- [x] `evaluation/evaluate_run.py` — test-split RMSE, multi-horizon, arbitrage diagnostics
+- [x] `experiments/run_full_comparison.py` — orchestrate eval + comparison plots
+- [x] `evaluation/metrics.py` scorecard + `visualization/plot_curves.py`
 
 ## Key file map
 
@@ -106,12 +111,20 @@ python training/train_stage_a.py
 python training/train_stage_b.py --ablation sde_pde
 ```
 
-**Colab:** open `notebooks/colab_train.ipynb`, set runtime to **GPU** (not TPU for Stage B constraints).
+# Evaluate (test split, multi-horizon + baselines)
+python evaluation/evaluate_run.py --split test --output-dir reports/comparison
+
+# Full comparison (eval + plots; add --train-stage-a/b to retrain)
+python experiments/run_full_comparison.py
+```
+
+**Colab:** open `notebooks/colab_train.ipynb`, set runtime to **GPU** (not TPU for Stage B constraints). Run through cell 9 for evaluation scorecard.
 
 ## Training outputs
 
 - Stage A: `reports/checkpoints/stage_a/`, `reports/latents/stage_a/`
 - Stage B: `reports/checkpoints/stage_b/`, `reports/forecasts/stage_b/`
+- Evaluation: `reports/comparison/scorecard.csv`, `summary.json`, `figures/`
 
 ## Code style preferences
 
@@ -132,10 +145,9 @@ python training/train_stage_b.py --ablation sde_pde
 
 ## Suggested next tasks (priority)
 
-1. Implement `experiments/run_full_comparison.py`
-2. Finish baselines (`pca_var`, `nelson_siegel`)
-3. Wire evaluation metrics into a scorecard (RMSE by tenor, arbitrage diagnostics)
-4. Optional: `model.sde_activation` config flag (tanh vs relu ablation)
+1. Re-run Stage B ablations on Colab after Jacobian fix (`sde_jacobian`, `sde_both`)
+2. Optional: `model.sde_activation` config flag (tanh vs relu ablation)
+3. Optional: enable `include_hessian: true` PDE ablation experiment
 
 ## References
 

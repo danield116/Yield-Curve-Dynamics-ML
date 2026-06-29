@@ -18,6 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from constraints.no_arbitrage_pde import total_constraint_loss
 from data.dataloaders import build_latent_window_dataloaders
 from models.neural_sde import LatentNeuralSDE
+from training.manifold_ops import linearized_curve_forecast, make_manifold_ops
 from training.train_stage_a import build_stage_a_model, load_config, set_seed, get_device
 
 
@@ -78,14 +79,8 @@ def load_stage_a_checkpoint(config, device, checkpoint_path=None):
 
 def make_full_curve_decoder(stage_a, level, use_levelscript):
     """Return decode(z)->full_curve callable for constraint modules."""
-
-    def decode_full_curve(z):
-        if use_levelscript:
-            shape = stage_a.decode(z, level)
-            return shape + level
-        return stage_a.decode(z)
-
-    return decode_full_curve
+    _, decode_fn = make_manifold_ops(stage_a, level, use_levelscript)
+    return decode_fn
 
 
 def compute_stage_b_loss(batch, sde, stage_a, config, ablation_flags, dt=1.0):
@@ -118,15 +113,19 @@ def compute_stage_b_loss(batch, sde, stage_a, config, ablation_flags, dt=1.0):
         level = y_fut[:, 0, level_tenor_index : level_tenor_index + 1]
 
     decode_fn = make_full_curve_decoder(stage_a, level, use_levelscript)
-    y_decoded = decode_fn(z_t)
+    encode_fn, _ = make_manifold_ops(
+        stage_a, level, use_levelscript, level_tenor_index=level_tenor_index
+    )
+    y_constraint = linearized_curve_forecast(decode_fn, z_t, z_pred)
     mu_q = sde.drift_q(z_t)
     sigma = sde.diffusion(z_t)
 
     constraint_loss = total_constraint_loss(
-        y=y_decoded,
+        y=y_constraint,
         z=z_t,
         decoder=decode_fn,
         encoder=stage_a,
+        encode_fn=encode_fn,
         mu_q=mu_q,
         sigma=sigma,
         lambda_pde=ablation_flags["lambda_pde"],

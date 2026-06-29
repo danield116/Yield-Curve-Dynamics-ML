@@ -43,3 +43,6 @@ constraints:
 
 evaluation:
   horizons: [1, 5, 21, 63]
+  baselines: ["pca_var", "nss"]
+  report_dir: "reports/comparison"
+  split: "test"

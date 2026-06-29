@@ -180,9 +180,9 @@ def total_constraint_loss(
     y,
     z,
     decoder,
-    encoder,
-    mu_q,
-    sigma,
+    encoder=None,
+    mu_q=None,
+    sigma=None,
     tau=None,
     lambda_pde=0.1,
     lambda_diag=0.1,
@@ -192,6 +192,7 @@ def total_constraint_loss(
     use_jacobian=False,
     projection_method="reencode",
     include_hessian=False,
+    encode_fn=None,
 ):
     """Composite constraint loss for Stage B ablations."""
     if tau is None:
@@ -218,8 +219,9 @@ def total_constraint_loss(
         loss = loss + lambda_jac * manifold_projection_loss(
             y_pred=y,
             z=z,
+            encode_fn=encode_fn,
+            decode_fn=decoder,
             encoder=encoder,
-            decoder=decoder,
             method=projection_method,
         )
 
