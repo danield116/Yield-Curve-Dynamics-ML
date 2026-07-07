@@ -51,6 +51,8 @@ def resolve_ablation_flags(config, ablation_override=None):
     flags["jacobian_train_horizons"] = [
         int(h) for h in constraints_cfg.get("jacobian_train_horizons", [1, 5, 21])
     ]
+    flags["jacobian_warmup_epochs"] = int(constraints_cfg.get("jacobian_warmup_epochs", 0))
+    flags["jacobian_weight_multiplier"] = float(constraints_cfg.get("jacobian_weight_multiplier", 1.0))
     return flags
 
 
@@ -109,7 +111,16 @@ def make_full_curve_decoder(stage_a, level, use_levelscript):
     return decode_fn
 
 
-def compute_stage_b_loss(batch, sde, stage_a, config, ablation_flags, dt=1.0, forecast_horizon=1):
+def compute_stage_b_loss(
+    batch,
+    sde,
+    stage_a,
+    config,
+    ablation_flags,
+    dt=1.0,
+    forecast_horizon=1,
+    epoch_idx=1,
+):
     """Composite Stage B loss: latent fit + curve fit + optional constraints."""
     data_cfg = config.get("data", {})
     training_cfg = config.get("training", {})
@@ -180,6 +191,11 @@ def compute_stage_b_loss(batch, sde, stage_a, config, ablation_flags, dt=1.0, fo
             and forecast_horizon in ablation_flags["jacobian_train_horizons"]
         )
 
+        jacobian_scale = 1.0
+        if use_jacobian_now and ablation_flags["jacobian_warmup_epochs"] > 0:
+            jacobian_scale = min(1.0, float(epoch_idx) / float(ablation_flags["jacobian_warmup_epochs"]))
+        jacobian_scale *= ablation_flags["jacobian_weight_multiplier"]
+
         constraint_loss = total_constraint_loss(
             y=y_constraint,
             z=z_start,
@@ -190,7 +206,7 @@ def compute_stage_b_loss(batch, sde, stage_a, config, ablation_flags, dt=1.0, fo
             sigma=sigma,
             lambda_pde=ablation_flags["lambda_pde"],
             lambda_diag=ablation_flags["lambda_diag"],
-            lambda_jac=ablation_flags["lambda_jac"],
+            lambda_jac=ablation_flags["lambda_jac"] * jacobian_scale,
             use_pde=use_pde_now,
             use_diag=use_diag_now,
             use_jacobian=use_jacobian_now,
@@ -204,7 +220,7 @@ def compute_stage_b_loss(batch, sde, stage_a, config, ablation_flags, dt=1.0, fo
     return loss, metrics
 
 
-def run_epoch(sde, stage_a, loader, optimizer, device, config, ablation_flags, dt, train=True):
+def run_epoch(sde, stage_a, loader, optimizer, device, config, ablation_flags, dt, train=True, epoch_idx=1):
     if train:
         sde.train()
     else:
@@ -242,6 +258,7 @@ def run_epoch(sde, stage_a, loader, optimizer, device, config, ablation_flags, d
             ablation_flags=ablation_flags,
             dt=dt,
             forecast_horizon=forecast_horizon,
+            epoch_idx=epoch_idx,
         )
 
         if train:
@@ -356,7 +373,9 @@ def train_stage_b(config, ablation_override=None):
             f"Jacobian: {ablation_flags['jacobian_train_horizons']} | "
             f"diag: {ablation_flags['diag_train_horizons']} | "
             f"lambda_pde: {ablation_flags['lambda_pde']} | "
-            f"lambda_jac: {ablation_flags['lambda_jac']}"
+            f"lambda_jac: {ablation_flags['lambda_jac']} | "
+            f"jacobian_warmup_epochs: {ablation_flags['jacobian_warmup_epochs']} | "
+            f"jacobian_weight_multiplier: {ablation_flags['jacobian_weight_multiplier']}"
         )
 
     latent_dir = training_cfg.get("latent_dir", "reports/latents/stage_a")
@@ -406,10 +425,10 @@ def train_stage_b(config, ablation_override=None):
 
     for epoch in range(1, epochs + 1):
         train_metrics = run_epoch(
-            sde, stage_a, loaders.train, optimizer, device, config, ablation_flags, dt, train=True
+            sde, stage_a, loaders.train, optimizer, device, config, ablation_flags, dt, train=True, epoch_idx=epoch
         )
         val_metrics = run_epoch(
-            sde, stage_a, loaders.val, optimizer, device, config, ablation_flags, dt, train=False
+            sde, stage_a, loaders.val, optimizer, device, config, ablation_flags, dt, train=False, epoch_idx=epoch
         )
 
         row = {"epoch": epoch, "train": train_metrics, "val": val_metrics}

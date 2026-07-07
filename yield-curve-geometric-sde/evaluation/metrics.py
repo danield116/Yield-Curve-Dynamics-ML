@@ -54,6 +54,7 @@ CONSTRAINT_SUMMARY_COLUMNS = [
     "curve_rmse",
     "curve_mae_mean",
     "manifold_off_manifold_rmse",
+    "manifold_delta_off_manifold_rmse",
     "arb_discount_monotonicity_violations",
     "arb_forward_smoothness",
     "arb_scenario_stability",
@@ -103,7 +104,7 @@ def save_scorecard(
     rows: list[dict],
     output_dir: str | Path,
     tenors: list[str] | None = None,
-    constraint_summary_horizon: int = 1,
+    constraint_summary_horizons: list[int] | None = None,
 ) -> Path:
     """Write comparison CSV + JSON summaries."""
     output_dir = Path(output_dir)
@@ -124,9 +125,10 @@ def save_scorecard(
     csv_path = output_dir / "scorecard.csv"
     frame.to_csv(csv_path, index=False)
 
-    constraint_csv = output_dir / f"constraint_ablation_h{constraint_summary_horizon}.csv"
-    ablation_frame = constraint_ablation_summary(frame, horizon=constraint_summary_horizon)
-    if not ablation_frame.empty:
-        ablation_frame.to_csv(constraint_csv, index=False)
+    for horizon in (constraint_summary_horizons or [1]):
+        constraint_csv = output_dir / f"constraint_ablation_h{horizon}.csv"
+        ablation_frame = constraint_ablation_summary(frame, horizon=horizon)
+        if not ablation_frame.empty:
+            ablation_frame.to_csv(constraint_csv, index=False)
 
     return csv_path
