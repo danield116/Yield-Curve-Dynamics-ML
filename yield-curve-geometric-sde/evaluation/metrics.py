@@ -48,6 +48,32 @@ def latent_rmse(z_true: np.ndarray, z_pred: np.ndarray) -> float:
     return float(np.sqrt(((z_true - z_pred) ** 2).mean()))
 
 
+CONSTRAINT_SUMMARY_COLUMNS = [
+    "model",
+    "horizon",
+    "curve_rmse",
+    "curve_mae_mean",
+    "manifold_off_manifold_rmse",
+    "arb_discount_monotonicity_violations",
+    "arb_forward_smoothness",
+    "arb_scenario_stability",
+]
+
+
+def constraint_ablation_summary(frame: pd.DataFrame, horizon: int = 1) -> pd.DataFrame:
+    """Stage B ablation table for forecast accuracy + geometry/arbitrage metrics."""
+    if frame.empty or "model" not in frame.columns:
+        return frame
+    mask = frame["model"].astype(str).str.startswith("stage_b_")
+    if "horizon" in frame.columns:
+        mask &= frame["horizon"] == horizon
+    cols = [c for c in CONSTRAINT_SUMMARY_COLUMNS if c in frame.columns]
+    out = frame.loc[mask, cols].copy()
+    if "curve_rmse" in out.columns:
+        out = out.sort_values("curve_rmse", na_position="last").reset_index(drop=True)
+    return out
+
+
 def build_scorecard(rows: list[dict], tenors: list[str] | None = None) -> pd.DataFrame:
     """Flatten evaluation rows into a comparison table."""
     flat_rows = []
@@ -73,7 +99,12 @@ def build_scorecard(rows: list[dict], tenors: list[str] | None = None) -> pd.Dat
     return frame
 
 
-def save_scorecard(rows: list[dict], output_dir: str | Path, tenors: list[str] | None = None) -> Path:
+def save_scorecard(
+    rows: list[dict],
+    output_dir: str | Path,
+    tenors: list[str] | None = None,
+    constraint_summary_horizon: int = 1,
+) -> Path:
     """Write comparison CSV + JSON summaries."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -92,4 +123,10 @@ def save_scorecard(rows: list[dict], output_dir: str | Path, tenors: list[str] |
     frame = build_scorecard(serializable, tenors=tenors)
     csv_path = output_dir / "scorecard.csv"
     frame.to_csv(csv_path, index=False)
+
+    constraint_csv = output_dir / f"constraint_ablation_h{constraint_summary_horizon}.csv"
+    ablation_frame = constraint_ablation_summary(frame, horizon=constraint_summary_horizon)
+    if not ablation_frame.empty:
+        ablation_frame.to_csv(constraint_csv, index=False)
+
     return csv_path

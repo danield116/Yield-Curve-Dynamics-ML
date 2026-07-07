@@ -46,6 +46,11 @@ def resolve_ablation_flags(config, ablation_override=None):
     flags["lambda_jac"] = float(constraints_cfg.get("jacobian_projection_weight", 0.1))
     flags["projection_method"] = constraints_cfg.get("projection_method", "reencode")
     flags["include_hessian"] = bool(constraints_cfg.get("include_hessian", False))
+    flags["pde_train_horizons"] = [int(h) for h in constraints_cfg.get("pde_train_horizons", [1])]
+    flags["diag_train_horizons"] = [int(h) for h in constraints_cfg.get("diag_train_horizons", [1])]
+    flags["jacobian_train_horizons"] = [
+        int(h) for h in constraints_cfg.get("jacobian_train_horizons", [1, 5, 21])
+    ]
     return flags
 
 
@@ -168,6 +173,13 @@ def compute_stage_b_loss(batch, sde, stage_a, config, ablation_flags, dt=1.0, fo
         mu_q = sde.drift_q(sde_input)
         sigma = sde.diffusion(sde_input)
 
+        use_pde_now = ablation_flags["use_pde"] and forecast_horizon in ablation_flags["pde_train_horizons"]
+        use_diag_now = ablation_flags["use_diag"] and forecast_horizon in ablation_flags["diag_train_horizons"]
+        use_jacobian_now = (
+            ablation_flags["use_jacobian"]
+            and forecast_horizon in ablation_flags["jacobian_train_horizons"]
+        )
+
         constraint_loss = total_constraint_loss(
             y=y_constraint,
             z=z_start,
@@ -179,9 +191,9 @@ def compute_stage_b_loss(batch, sde, stage_a, config, ablation_flags, dt=1.0, fo
             lambda_pde=ablation_flags["lambda_pde"],
             lambda_diag=ablation_flags["lambda_diag"],
             lambda_jac=ablation_flags["lambda_jac"],
-            use_pde=ablation_flags["use_pde"],
-            use_diag=ablation_flags["use_diag"],
-            use_jacobian=ablation_flags["use_jacobian"],
+            use_pde=use_pde_now,
+            use_diag=use_diag_now,
+            use_jacobian=use_jacobian_now,
             projection_method=ablation_flags["projection_method"],
             include_hessian=ablation_flags["include_hessian"],
         )
@@ -338,6 +350,14 @@ def train_stage_b(config, ablation_override=None):
     )
     print(f"Train horizons: {train_horizons} | val horizon: {val_horizon}")
     print(f"Checkpoint metric: {checkpoint_metric}")
+    if ablation_flags["use_pde"] or ablation_flags["use_jacobian"] or ablation_flags["use_diag"]:
+        print(
+            f"Constraint horizons | PDE: {ablation_flags['pde_train_horizons']} | "
+            f"Jacobian: {ablation_flags['jacobian_train_horizons']} | "
+            f"diag: {ablation_flags['diag_train_horizons']} | "
+            f"lambda_pde: {ablation_flags['lambda_pde']} | "
+            f"lambda_jac: {ablation_flags['lambda_jac']}"
+        )
 
     latent_dir = training_cfg.get("latent_dir", "reports/latents/stage_a")
     processed_dir = training_cfg.get("processed_dir", "data/processed")

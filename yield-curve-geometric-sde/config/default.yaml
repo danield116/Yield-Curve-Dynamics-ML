@@ -47,8 +47,11 @@ constraints:
   ablation: "sde_only"
   projection_method: "reencode"
   include_hessian: false
-  pde_penalty_weight: 0.1
-  jacobian_projection_weight: 0.1
+  pde_penalty_weight: 0.01
+  jacobian_projection_weight: 0.05
+  pde_train_horizons: [1]
+  diag_train_horizons: [1]
+  jacobian_train_horizons: [1, 5, 21]
   projection_eps: 1e-5
 
 evaluation:
@@ -56,3 +59,4 @@ evaluation:
   baselines: ["persistence", "pca_var", "nss"]
   report_dir: "reports/comparison"
   split: "test"
+  constraint_summary_horizon: 1

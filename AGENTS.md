@@ -144,6 +144,9 @@ python experiments/run_full_comparison.py
 - **SDE input:** last `latent_history_steps` latent vectors (default 10), not only z_t
 - **LevelScript decode at forecast:** uses last known level from `y_hist`, not future `y_fut` (no lookahead)
 - **Persistence-residual forecast:** `y_pred = y_last + decode(z_pred) - decode(z_last)` (matches persistence at zero drift)
+- **Constraint horizon gating:** PDE/diag apply on `pde_train_horizons` (default `[1]`); Jacobian on `jacobian_train_horizons` (default `[1,5,21]`)
+- **Constraint weights (tuned):** `pde_penalty_weight=0.01`, `jacobian_projection_weight=0.05`
+- **Eval geometry table:** `reports/comparison/constraint_ablation_h1.csv` + arb/manifold bar plots
 - **Stage A KL:** `kl_weight` default `0.1` (lower KL → better reconstruction for Stage B)
 - **Constraints are soft penalties** during training; diagnostics also used at eval
 - **AlphaVantage not recommended** — less tenor coverage than FRED, API limits

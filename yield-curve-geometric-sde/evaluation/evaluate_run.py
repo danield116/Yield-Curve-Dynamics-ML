@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import torch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -19,7 +20,9 @@ from baselines.persistence import rolling_forecast_persistence
 from baselines.pca_var import rolling_forecast_pca_var
 from data.dataloaders import build_latent_window_dataloaders, build_pointwise_dataloaders
 from evaluation.arbitrage_diagnostics import curve_arbitrage_metrics
+from evaluation.manifold_metrics import manifold_off_manifold_rmse
 from evaluation.metrics import (
+    constraint_ablation_summary,
     latent_rmse,
     mean_curve_rmse,
     mae_by_tenor,
@@ -138,6 +141,8 @@ def evaluate_stage_b_forecast(
     y_pred_all = []
     z_true_all = []
     z_pred_all = []
+    manifold_sq = 0.0
+    manifold_n = 0
 
     for batch in loader:
         batch = {k: v.to(device) for k, v in batch.items()}
@@ -148,7 +153,7 @@ def evaluate_stage_b_forecast(
         if use_levelscript:
             level = batch["y_hist"][:, -1, level_tenor_index : level_tenor_index + 1]
 
-        _, decode_fn = make_manifold_ops(stage_a, level, use_levelscript, level_tenor_index)
+        encode_fn, decode_fn = make_manifold_ops(stage_a, level, use_levelscript, level_tenor_index)
         use_persistence_residual = bool(training_cfg.get("use_persistence_residual", True))
         if use_persistence_residual:
             y_pred = persistence_residual_curve_forecast(decode_fn, z_hist, batch["y_hist"], z)
@@ -156,6 +161,10 @@ def evaluate_stage_b_forecast(
             y_pred = decode_fn(z)
         y_true = batch["y_fut"][:, horizon - 1, :]
         z_true = batch["z_fut"][:, horizon - 1, :]
+
+        batch_manifold = manifold_off_manifold_rmse(y_pred, encode_fn, decode_fn)
+        manifold_sq += batch_manifold**2 * y_pred.shape[0]
+        manifold_n += y_pred.shape[0]
 
         y_true_all.append(y_true.cpu().numpy())
         y_pred_all.append(y_pred.cpu().numpy())
@@ -167,6 +176,7 @@ def evaluate_stage_b_forecast(
     z_true = np.concatenate(z_true_all, axis=0)
     z_pred = np.concatenate(z_pred_all, axis=0)
     arb = curve_arbitrage_metrics(y_pred)
+    manifold_rmse = float(np.sqrt(manifold_sq / max(manifold_n, 1)))
 
     return {
         "model": f"stage_b_{ablation}",
@@ -175,6 +185,7 @@ def evaluate_stage_b_forecast(
         "curve_rmse": mean_curve_rmse(y_true, y_pred),
         "curve_mae_mean": float(mae_by_tenor(y_true, y_pred).mean()),
         "latent_rmse": latent_rmse(z_true, z_pred),
+        "manifold_off_manifold_rmse": manifold_rmse,
         "rmse_by_tenor": rmse_by_tenor(y_true, y_pred),
         "segments": segment_errors(y_true, y_pred),
         "arbitrage": arb,
@@ -304,6 +315,34 @@ def save_evaluation_plots(rows: list[dict], output_dir: str | Path, config: dict
             output_path=figures_dir / f"curve_rmse_by_model_h{primary_h}.png",
         )
 
+    constraint_rows = [
+        r
+        for r in rows
+        if str(r.get("model", "")).startswith("stage_b_") and r.get("horizon") == primary_h
+    ]
+    for metric_key, file_stub in [
+        ("manifold_off_manifold_rmse", "manifold_off_manifold_rmse"),
+        ("arb_forward_smoothness", "arb_forward_smoothness"),
+        ("arb_discount_monotonicity_violations", "arb_discount_monotonicity_violations"),
+        ("arb_scenario_stability", "arb_scenario_stability"),
+    ]:
+        plot_rows = []
+        for row in constraint_rows:
+            if metric_key.startswith("arb_"):
+                arb = row.get("arbitrage") or {}
+                inner_key = metric_key.replace("arb_", "", 1)
+                if inner_key not in arb:
+                    continue
+                plot_rows.append({**row, metric_key: arb[inner_key]})
+            elif metric_key in row:
+                plot_rows.append(row)
+        if plot_rows:
+            plot_scorecard_bar(
+                plot_rows,
+                metric=metric_key,
+                output_path=figures_dir / f"{file_stub}_stage_b_h{primary_h}.png",
+            )
+
     for ablation in ABLATION_PRESETS:
         model_name = f"stage_b_{ablation}"
         if any(r["model"] == model_name for r in rows):
@@ -343,6 +382,8 @@ def main():
 
     config = load_config(Path(args.config))
     tenors = config.get("data", {}).get("tenors")
+    eval_cfg = config.get("evaluation", {})
+    summary_h = int(eval_cfg.get("constraint_summary_horizon", 1))
     rows = evaluate_run(config, split=args.split, include_stage_a=not args.skip_stage_a)
     stage_b_rows = [r for r in rows if str(r.get("model", "")).startswith("stage_b_")]
     if not stage_b_rows and not args.allow_missing_stage_b:
@@ -351,8 +392,22 @@ def main():
             "(colab cell 7) and confirm reports/checkpoints/stage_b/stage_b_*_best.pt exist."
         )
     output_dir = Path(args.output_dir)
-    csv_path = save_scorecard(rows, output_dir, tenors=tenors)
+    csv_path = save_scorecard(
+        rows,
+        output_dir,
+        tenors=tenors,
+        constraint_summary_horizon=summary_h,
+    )
     figures_dir = save_evaluation_plots(rows, output_dir, config)
+    scorecard_frame = constraint_ablation_summary(pd.read_csv(csv_path), horizon=summary_h)
+    if not scorecard_frame.empty:
+        print(f"\n=== Constraint ablation summary (h={summary_h}; lower is better) ===")
+        print(scorecard_frame.to_string(index=False))
+        print(
+            "\nInterpretation: compare stage_b_sde_jacobian vs stage_b_sde_pde on "
+            "manifold_off_manifold_rmse and arb_* (Jacobian should improve geometry "
+            "without hurting curve_rmse)."
+        )
 
     summary = []
     for row in rows:
