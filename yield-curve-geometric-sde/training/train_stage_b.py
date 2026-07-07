@@ -19,7 +19,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from constraints.no_arbitrage_pde import total_constraint_loss
 from data.dataloaders import build_latent_window_dataloaders
 from training.manifold_ops import linearized_curve_forecast, make_manifold_ops
-from training.sde_utils import build_latent_neural_sde, build_sde_input, roll_latent_forecast
+from training.sde_utils import build_latent_neural_sde, build_sde_input, persistence_residual_curve_forecast, roll_latent_forecast
 from training.train_stage_a import build_stage_a_model, load_config, set_seed, get_device
 
 
@@ -136,7 +136,11 @@ def compute_stage_b_loss(batch, sde, stage_a, config, ablation_flags, dt=1.0, fo
 
     decode_fn = make_full_curve_decoder(stage_a, level, use_levelscript)
     y_true = y_fut[:, forecast_horizon - 1, :]
-    y_pred_curve = decode_fn(z_t)
+    use_persistence_residual = bool(training_cfg.get("use_persistence_residual", True))
+    if use_persistence_residual:
+        y_pred_curve = persistence_residual_curve_forecast(decode_fn, z_hist, y_hist, z_t)
+    else:
+        y_pred_curve = decode_fn(z_t)
     curve_loss = F.mse_loss(y_pred_curve, y_true)
 
     loss = latent_weight * fit_loss + curve_weight * curve_loss
@@ -156,7 +160,10 @@ def compute_stage_b_loss(batch, sde, stage_a, config, ablation_flags, dt=1.0, fo
             stage_a, level, use_levelscript, level_tenor_index=level_tenor_index
         )
         z_start = z_hist[:, -1, :]
-        y_constraint = linearized_curve_forecast(decode_fn, z_start, z_t)
+        if use_persistence_residual:
+            y_constraint = persistence_residual_curve_forecast(decode_fn, z_hist, y_hist, z_t)
+        else:
+            y_constraint = linearized_curve_forecast(decode_fn, z_start, z_t)
         sde_input = build_sde_input(z_hist, history_steps)
         mu_q = sde.drift_q(sde_input)
         sigma = sde.diffusion(sde_input)
@@ -274,7 +281,19 @@ def save_forecast_paths(sde, stage_a, loader, device, config, output_path, dt=1.
             level = batch["y_hist"][:, -1, level_tenor_index : level_tenor_index + 1]
 
         decode_fn = make_full_curve_decoder(stage_a, level, use_levelscript)
-        y_path = torch.stack([decode_fn(z_path[:, t, :]) for t in range(z_path.shape[1])], dim=1)
+        use_persistence_residual = bool(config.get("training", {}).get("use_persistence_residual", True))
+        if use_persistence_residual:
+            y_path = torch.stack(
+                [
+                    persistence_residual_curve_forecast(
+                        decode_fn, z_hist, batch["y_hist"], z_path[:, t, :]
+                    )
+                    for t in range(z_path.shape[1])
+                ],
+                dim=1,
+            )
+        else:
+            y_path = torch.stack([decode_fn(z_path[:, t, :]) for t in range(z_path.shape[1])], dim=1)
 
         z_paths.append(z_path.cpu())
         y_paths.append(y_path.cpu())

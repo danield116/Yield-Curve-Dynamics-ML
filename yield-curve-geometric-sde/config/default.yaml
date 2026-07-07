@@ -40,6 +40,7 @@ training:
   latent_history_steps: 10
   latent_fit_weight: 0.05
   curve_loss_weight: 10.0
+  use_persistence_residual: true
   checkpoint_metric: "curve_rmse"
 
 constraints:

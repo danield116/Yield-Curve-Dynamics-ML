@@ -24,6 +24,21 @@ def build_sde_input(z_hist: torch.Tensor, history_steps: int) -> torch.Tensor:
     return chunk.reshape(batch, history_steps * dim)
 
 
+def persistence_residual_curve_forecast(
+    decode_fn,
+    z_hist: torch.Tensor,
+    y_hist: torch.Tensor,
+    z_pred: torch.Tensor,
+) -> torch.Tensor:
+    """Forecast = last observed curve + decoded latent change.
+
+    With zero drift (z_pred == z_last), this exactly equals persistence in yield space.
+    """
+    z_last = z_hist[:, -1, :]
+    y_persist = y_hist[:, -1, :]
+    return y_persist + decode_fn(z_pred) - decode_fn(z_last).detach()
+
+
 def build_latent_neural_sde(config) -> LatentNeuralSDE:
     """Construct SDE module from YAML config."""
     model_cfg = config.get("model", {})

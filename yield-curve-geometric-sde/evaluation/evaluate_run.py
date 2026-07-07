@@ -28,7 +28,7 @@ from evaluation.metrics import (
     segment_errors,
 )
 from training.manifold_ops import make_manifold_ops
-from training.sde_utils import roll_latent_forecast
+from training.sde_utils import persistence_residual_curve_forecast, roll_latent_forecast
 from training.train_stage_a import (
     build_stage_a_model,
     forward_model,
@@ -149,7 +149,11 @@ def evaluate_stage_b_forecast(
             level = batch["y_hist"][:, -1, level_tenor_index : level_tenor_index + 1]
 
         _, decode_fn = make_manifold_ops(stage_a, level, use_levelscript, level_tenor_index)
-        y_pred = decode_fn(z)
+        use_persistence_residual = bool(training_cfg.get("use_persistence_residual", True))
+        if use_persistence_residual:
+            y_pred = persistence_residual_curve_forecast(decode_fn, z_hist, batch["y_hist"], z)
+        else:
+            y_pred = decode_fn(z)
         y_true = batch["y_fut"][:, horizon - 1, :]
         z_true = batch["z_fut"][:, horizon - 1, :]
 
@@ -240,8 +244,9 @@ def evaluate_run(
 
     for ablation in ablations:
         ckpt = Path(config.get("training", {}).get("checkpoint_dir_stage_b", "reports/checkpoints/stage_b"))
-        if not (ckpt / f"stage_b_{ablation}_best.pt").exists():
-            print(f"Skipping missing Stage B checkpoint: {ablation}")
+        ckpt_path = ckpt / f"stage_b_{ablation}_best.pt"
+        if not ckpt_path.exists():
+            print(f"WARNING: Skipping missing Stage B checkpoint: {ckpt_path}")
             continue
         for horizon in horizons:
             try:
@@ -263,6 +268,13 @@ def evaluate_run(
                 rows.append(evaluate_baseline(config, baseline_name, split=split, horizon=horizon))
             except Exception as exc:
                 print(f"Baseline {baseline_name} h={horizon} failed: {exc}")
+
+    stage_b_rows = [r for r in rows if str(r.get("model", "")).startswith("stage_b_")]
+    if not stage_b_rows:
+        print(
+            "WARNING: No Stage B results in scorecard. "
+            "Train cell 7 first and confirm reports/checkpoints/stage_b/stage_b_*_best.pt exist."
+        )
 
     return rows
 
