@@ -3,6 +3,7 @@
 import argparse
 import copy
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -103,14 +104,26 @@ def compute_stage_b_loss(batch, sde, stage_a, config, ablation_flags, dt=1.0):
         "loss": fit_loss.item(),
         "fit": fit_loss.item(),
         "constraint": 0.0,
+        "latent_rmse": 0.0,
+        "curve_rmse": 0.0,
+        "curve_mae": 0.0,
     }
-
-    if not (ablation_flags["use_pde"] or ablation_flags["use_jacobian"] or ablation_flags["use_diag"]):
-        return fit_loss, metrics
 
     level = None
     if use_levelscript:
         level = y_fut[:, 0, level_tenor_index : level_tenor_index + 1]
+
+    with torch.no_grad():
+        decode_fn = make_full_curve_decoder(stage_a, level, use_levelscript)
+        y_pred_curve = decode_fn(z_pred.detach())
+        y_true = y_fut[:, 0, :]
+        curve_mse = F.mse_loss(y_pred_curve, y_true)
+        metrics["latent_rmse"] = math.sqrt(fit_loss.detach().item())
+        metrics["curve_rmse"] = math.sqrt(curve_mse.item())
+        metrics["curve_mae"] = F.l1_loss(y_pred_curve, y_true).item()
+
+    if not (ablation_flags["use_pde"] or ablation_flags["use_jacobian"] or ablation_flags["use_diag"]):
+        return fit_loss, metrics
 
     decode_fn = make_full_curve_decoder(stage_a, level, use_levelscript)
     encode_fn, _ = make_manifold_ops(
@@ -150,7 +163,7 @@ def run_epoch(sde, stage_a, loader, optimizer, device, config, ablation_flags, d
     else:
         sde.eval()
 
-    totals = {"loss": 0.0, "fit": 0.0, "constraint": 0.0}
+    totals = {"loss": 0.0, "fit": 0.0, "constraint": 0.0, "latent_rmse": 0.0, "curve_rmse": 0.0, "curve_mae": 0.0}
     n_batches = 0
 
     for batch in loader:
@@ -299,7 +312,10 @@ def train_stage_b(config, ablation_override=None):
             f"Epoch {epoch:03d} | "
             f"Train loss {train_metrics['loss']:.4f} (fit {train_metrics['fit']:.4f}, "
             f"constraint {train_metrics['constraint']:.4f}) | "
-            f"Val loss {val_metrics['loss']:.4f}"
+            f"Val loss {val_metrics['loss']:.4f} | "
+            f"Val accuracy: latent_rmse {val_metrics['latent_rmse']:.4f}, "
+            f"curve_rmse {val_metrics['curve_rmse']:.4f}, "
+            f"curve_mae {val_metrics['curve_mae']:.4f}"
         )
 
         if val_metrics["loss"] < best_val_loss:

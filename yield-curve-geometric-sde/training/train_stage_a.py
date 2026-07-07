@@ -3,6 +3,7 @@
 import argparse
 import copy
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -129,14 +130,18 @@ def compute_stage_a_loss(model, curves, config):
             full_true = x + level
             full_pred = x_hat + level
             curve_mse = F.mse_loss(full_pred, full_true).item()
+            curve_mae = F.l1_loss(full_pred, full_true).item()
         else:
             curve_mse = recon.item() if isinstance(recon, torch.Tensor) else float(recon)
+            curve_mae = F.l1_loss(x_hat, x).item()
 
     metrics = {
         "loss": loss.item(),
         "recon": recon.item() if isinstance(recon, torch.Tensor) else float(recon),
         "kl": kl.item(),
         "curve_mse": curve_mse,
+        "curve_rmse": math.sqrt(curve_mse),
+        "curve_mae": curve_mae,
     }
     return loss, metrics
 
@@ -147,7 +152,7 @@ def run_epoch(model, loader, optimizer, device, config, train=True):
     else:
         model.eval()
 
-    totals = {"loss": 0.0, "recon": 0.0, "kl": 0.0, "curve_mse": 0.0}
+    totals = {"loss": 0.0, "recon": 0.0, "kl": 0.0, "curve_mse": 0.0, "curve_rmse": 0.0, "curve_mae": 0.0}
     n_batches = 0
 
     for curves in loader:
@@ -258,8 +263,10 @@ def train_stage_a(config):
 
         print(
             f"Epoch {epoch:03d} | "
-            f"Train loss {train_metrics['loss']:.4f} (recon {train_metrics['recon']:.4f}, kl {train_metrics['kl']:.4f}) | "
-            f"Val loss {val_metrics['loss']:.4f} (curve_mse {val_metrics['curve_mse']:.4f})"
+            f"Train loss {train_metrics['loss']:.4f} | "
+            f"Val loss {val_metrics['loss']:.4f} | "
+            f"Val accuracy: curve_rmse {val_metrics['curve_rmse']:.4f}, "
+            f"curve_mae {val_metrics['curve_mae']:.4f}"
         )
 
         if val_metrics["loss"] < best_val_loss:
