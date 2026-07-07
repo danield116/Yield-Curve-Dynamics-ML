@@ -2,10 +2,39 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+
+
+def plot_training_history(
+    history_path: str | Path,
+    title: str | None = None,
+    output_path: str | Path | None = None,
+) -> plt.Figure:
+    """Plot train/val loss curves from a Stage A or Stage B history JSON file."""
+    history_path = Path(history_path)
+    history = json.loads(history_path.read_text(encoding="utf-8"))
+    epochs = [row["epoch"] for row in history]
+    train_loss = [row["train"]["loss"] for row in history]
+    val_loss = [row["val"]["loss"] for row in history]
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.plot(epochs, train_loss, label="train")
+    ax.plot(epochs, val_loss, label="val")
+    ax.set_xlabel("epoch")
+    ax.set_ylabel("loss")
+    ax.set_title(title or history_path.stem)
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    fig.tight_layout()
+    if output_path is not None:
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(output_path, dpi=150)
+    return fig
 
 
 def plot_curve_snapshot(

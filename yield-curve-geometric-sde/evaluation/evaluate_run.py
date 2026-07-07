@@ -288,6 +288,55 @@ def evaluate_run(
     return rows
 
 
+def save_evaluation_plots(rows: list[dict], output_dir: str | Path, config: dict) -> Path:
+    """Write comparison bar/horizon plots under output_dir/figures."""
+    from training.train_stage_b import ABLATION_PRESETS
+    from visualization.plot_curves import plot_horizon_curve, plot_scorecard_bar, plot_training_history
+
+    output_dir = Path(output_dir)
+    figures_dir = output_dir / "figures"
+    figures_dir.mkdir(parents=True, exist_ok=True)
+
+    eval_cfg = config.get("evaluation", {})
+    training_cfg = config.get("training", {})
+    model_cfg = config.get("model", {})
+    horizons = eval_cfg.get("horizons", [1, 5, 21, 63])
+    primary_h = horizons[0] if horizons else 1
+
+    h_rows = [r for r in rows if r.get("horizon") == primary_h and r.get("horizon", 0) > 0]
+    if not h_rows:
+        h_rows = [r for r in rows if r.get("horizon", 0) > 0]
+    if h_rows:
+        plot_scorecard_bar(
+            h_rows,
+            metric="curve_rmse",
+            output_path=figures_dir / f"curve_rmse_by_model_h{primary_h}.png",
+        )
+
+    for ablation in ABLATION_PRESETS:
+        model_name = f"stage_b_{ablation}"
+        if any(r["model"] == model_name for r in rows):
+            plot_horizon_curve(
+                rows,
+                model=model_name,
+                metric="curve_rmse",
+                output_path=figures_dir / f"{model_name}_rmse_vs_horizon.png",
+            )
+
+    variant = model_cfg.get("stage_a_variant", "student_t_cvae")
+    stage_a_hist = Path(training_cfg.get("checkpoint_dir", "reports/checkpoints/stage_a")) / (
+        f"stage_a_{variant}_history.json"
+    )
+    if stage_a_hist.exists():
+        plot_training_history(stage_a_hist, output_path=figures_dir / "stage_a_val_loss.png")
+
+    stage_b_dir = Path(training_cfg.get("checkpoint_dir_stage_b", "reports/checkpoints/stage_b"))
+    for hist_path in sorted(stage_b_dir.glob("stage_b_*_history.json")):
+        plot_training_history(hist_path, output_path=figures_dir / f"{hist_path.stem}.png")
+
+    return figures_dir
+
+
 def main():
     parser = argparse.ArgumentParser(description="Evaluate trained yield-curve models.")
     parser.add_argument("--config", default=str(PROJECT_ROOT / "config" / "default.yaml"))
@@ -301,6 +350,7 @@ def main():
     rows = evaluate_run(config, split=args.split, include_stage_a=not args.skip_stage_a)
     output_dir = Path(args.output_dir)
     csv_path = save_scorecard(rows, output_dir, tenors=tenors)
+    figures_dir = save_evaluation_plots(rows, output_dir, config)
 
     summary = []
     for row in rows:
@@ -316,6 +366,7 @@ def main():
         )
     print(json.dumps(summary, indent=2))
     print(f"Saved scorecard to: {csv_path.resolve()}")
+    print(f"Saved plots to: {figures_dir.resolve()}")
 
 
 if __name__ == "__main__":
