@@ -132,7 +132,7 @@ def evaluate_stage_b_forecast(
     loader = {"train": loaders.train, "val": loaders.val, "test": loaders.test}[split]
 
     stage_a = load_stage_a_checkpoint(config, device)
-    sde, checkpoint = load_stage_b_checkpoint(config, ablation, device)
+    sde, checkpoint = load_stage_b_checkpoint(config, device, ablation)
 
     y_true_all = []
     y_pred_all = []
