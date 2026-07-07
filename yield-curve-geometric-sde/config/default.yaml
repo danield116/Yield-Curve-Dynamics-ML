@@ -32,6 +32,9 @@ training:
   lookback: 21
   horizon: 1
   dt: 1.0
+  latent_history_steps: 5
+  curve_loss_weight: 1.0
+  checkpoint_metric: "curve_rmse"
 
 constraints:
   ablation: "sde_only"
@@ -43,6 +46,6 @@ constraints:
 
 evaluation:
   horizons: [1, 5, 21, 63]
-  baselines: ["pca_var", "nss"]
+  baselines: ["persistence", "pca_var", "nss"]
   report_dir: "reports/comparison"
   split: "test"

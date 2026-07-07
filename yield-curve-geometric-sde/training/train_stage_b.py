@@ -18,8 +18,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from constraints.no_arbitrage_pde import total_constraint_loss
 from data.dataloaders import build_latent_window_dataloaders
-from models.neural_sde import LatentNeuralSDE
 from training.manifold_ops import linearized_curve_forecast, make_manifold_ops
+from training.sde_utils import build_latent_neural_sde, build_sde_input, roll_latent_forecast
 from training.train_stage_a import build_stage_a_model, load_config, set_seed, get_device
 
 
@@ -78,6 +78,26 @@ def load_stage_a_checkpoint(config, device, checkpoint_path=None):
     return stage_a
 
 
+def load_stage_b_checkpoint(config, device, ablation: str, checkpoint_path=None):
+    """Load trained Stage B SDE checkpoint."""
+    training_cfg = config.get("training", {})
+    if checkpoint_path is None:
+        checkpoint_path = Path(training_cfg.get("checkpoint_dir_stage_b", "reports/checkpoints/stage_b"))
+        checkpoint_path = checkpoint_path / f"stage_b_{ablation}_best.pt"
+    else:
+        checkpoint_path = Path(checkpoint_path)
+
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"Stage B checkpoint not found: {checkpoint_path}")
+
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    ckpt_config = checkpoint.get("config", config)
+    sde = build_latent_neural_sde(ckpt_config).to(device)
+    sde.load_state_dict(checkpoint["sde_state_dict"])
+    sde.eval()
+    return sde, checkpoint
+
+
 def make_full_curve_decoder(stage_a, level, use_levelscript):
     """Return decode(z)->full_curve callable for constraint modules."""
     _, decode_fn = make_manifold_ops(stage_a, level, use_levelscript)
@@ -85,75 +105,74 @@ def make_full_curve_decoder(stage_a, level, use_levelscript):
 
 
 def compute_stage_b_loss(batch, sde, stage_a, config, ablation_flags, dt=1.0):
-    """Composite Stage B loss: latent fit + optional constraints."""
+    """Composite Stage B loss: latent fit + curve fit + optional constraints."""
     data_cfg = config.get("data", {})
+    training_cfg = config.get("training", {})
     use_levelscript = bool(data_cfg.get("use_levelscript", False))
     level_tenor_index = int(data_cfg.get("level_tenor_index", 3))
+    history_steps = int(training_cfg.get("latent_history_steps", 5))
+    curve_weight = float(training_cfg.get("curve_loss_weight", 1.0))
 
     z_hist = batch["z_hist"]
     z_fut = batch["z_fut"]
     y_fut = batch["y_fut"]
 
-    # One-step latent forecast from last history state.
+    sde_input = build_sde_input(z_hist, history_steps)
     z_t = z_hist[:, -1, :]
     z_target = z_fut[:, 0, :]
-    z_pred = z_t + sde.drift_p(z_t) * dt
+    z_pred = z_t + sde.drift_p(sde_input) * dt
     fit_loss = F.mse_loss(z_pred, z_target)
-
-    metrics = {
-        "loss": fit_loss.item(),
-        "fit": fit_loss.item(),
-        "constraint": 0.0,
-        "latent_rmse": 0.0,
-        "curve_rmse": 0.0,
-        "curve_mae": 0.0,
-    }
 
     level = None
     if use_levelscript:
         level = y_fut[:, 0, level_tenor_index : level_tenor_index + 1]
 
-    with torch.no_grad():
-        decode_fn = make_full_curve_decoder(stage_a, level, use_levelscript)
-        y_pred_curve = decode_fn(z_pred.detach())
-        y_true = y_fut[:, 0, :]
-        curve_mse = F.mse_loss(y_pred_curve, y_true)
-        metrics["latent_rmse"] = math.sqrt(fit_loss.detach().item())
-        metrics["curve_rmse"] = math.sqrt(curve_mse.item())
-        metrics["curve_mae"] = F.l1_loss(y_pred_curve, y_true).item()
-
-    if not (ablation_flags["use_pde"] or ablation_flags["use_jacobian"] or ablation_flags["use_diag"]):
-        return fit_loss, metrics
-
     decode_fn = make_full_curve_decoder(stage_a, level, use_levelscript)
-    encode_fn, _ = make_manifold_ops(
-        stage_a, level, use_levelscript, level_tenor_index=level_tenor_index
-    )
-    y_constraint = linearized_curve_forecast(decode_fn, z_t, z_pred)
-    mu_q = sde.drift_q(z_t)
-    sigma = sde.diffusion(z_t)
+    y_true = y_fut[:, 0, :]
+    y_pred_curve = decode_fn(z_pred)
+    curve_loss = F.mse_loss(y_pred_curve, y_true)
 
-    constraint_loss = total_constraint_loss(
-        y=y_constraint,
-        z=z_t,
-        decoder=decode_fn,
-        encoder=stage_a,
-        encode_fn=encode_fn,
-        mu_q=mu_q,
-        sigma=sigma,
-        lambda_pde=ablation_flags["lambda_pde"],
-        lambda_diag=ablation_flags["lambda_diag"],
-        lambda_jac=ablation_flags["lambda_jac"],
-        use_pde=ablation_flags["use_pde"],
-        use_diag=ablation_flags["use_diag"],
-        use_jacobian=ablation_flags["use_jacobian"],
-        projection_method=ablation_flags["projection_method"],
-        include_hessian=ablation_flags["include_hessian"],
-    )
+    loss = fit_loss + curve_weight * curve_loss
 
-    loss = fit_loss + constraint_loss
-    metrics["loss"] = loss.item()
-    metrics["constraint"] = constraint_loss.item()
+    metrics = {
+        "loss": loss.item(),
+        "fit": fit_loss.item(),
+        "curve_loss": curve_loss.item(),
+        "constraint": 0.0,
+        "latent_rmse": math.sqrt(fit_loss.detach().item()),
+        "curve_rmse": math.sqrt(curve_loss.detach().item()),
+        "curve_mae": F.l1_loss(y_pred_curve.detach(), y_true).item(),
+    }
+
+    if ablation_flags["use_pde"] or ablation_flags["use_jacobian"] or ablation_flags["use_diag"]:
+        encode_fn, _ = make_manifold_ops(
+            stage_a, level, use_levelscript, level_tenor_index=level_tenor_index
+        )
+        y_constraint = linearized_curve_forecast(decode_fn, z_t, z_pred)
+        mu_q = sde.drift_q(sde_input)
+        sigma = sde.diffusion(sde_input)
+
+        constraint_loss = total_constraint_loss(
+            y=y_constraint,
+            z=z_t,
+            decoder=decode_fn,
+            encoder=stage_a,
+            encode_fn=encode_fn,
+            mu_q=mu_q,
+            sigma=sigma,
+            lambda_pde=ablation_flags["lambda_pde"],
+            lambda_diag=ablation_flags["lambda_diag"],
+            lambda_jac=ablation_flags["lambda_jac"],
+            use_pde=ablation_flags["use_pde"],
+            use_diag=ablation_flags["use_diag"],
+            use_jacobian=ablation_flags["use_jacobian"],
+            projection_method=ablation_flags["projection_method"],
+            include_hessian=ablation_flags["include_hessian"],
+        )
+        loss = loss + constraint_loss
+        metrics["constraint"] = constraint_loss.item()
+        metrics["loss"] = loss.item()
+
     return loss, metrics
 
 
@@ -163,7 +182,15 @@ def run_epoch(sde, stage_a, loader, optimizer, device, config, ablation_flags, d
     else:
         sde.eval()
 
-    totals = {"loss": 0.0, "fit": 0.0, "constraint": 0.0, "latent_rmse": 0.0, "curve_rmse": 0.0, "curve_mae": 0.0}
+    totals = {
+        "loss": 0.0,
+        "fit": 0.0,
+        "curve_loss": 0.0,
+        "constraint": 0.0,
+        "latent_rmse": 0.0,
+        "curve_rmse": 0.0,
+        "curve_mae": 0.0,
+    }
     n_batches = 0
 
     for batch in loader:
@@ -213,14 +240,15 @@ def save_forecast_paths(sde, stage_a, loader, device, config, output_path, dt=1.
             break
 
         batch = {k: v.to(device) for k, v in batch.items()}
-        z0 = batch["z_hist"][:, -1, :]
+        z_hist = batch["z_hist"]
         horizon = batch["z_fut"].shape[1]
 
-        z_sim = [z0]
-        z = z0
+        z_window = z_hist
+        z_sim = [z_window[:, -1, :]]
         for _ in range(horizon):
-            dW = torch.randn_like(z) * (dt**0.5)
-            z = z + sde.drift_p(z) * dt + sde.diffusion(z) * dW
+            sde_input = build_sde_input(z_window, sde.history_steps)
+            z = z_window[:, -1, :] + sde.drift_p(sde_input) * dt
+            z_window = torch.cat([z_window[:, 1:, :], z.unsqueeze(1)], dim=1)
             z_sim.append(z)
 
         z_path = torch.stack(z_sim, dim=1)
@@ -260,13 +288,24 @@ def train_stage_b(config, ablation_override=None):
 
     ablation_flags = resolve_ablation_flags(config, ablation_override=ablation_override)
     ablation_name = ablation_flags["ablation"]
+    checkpoint_metric = training_cfg.get("checkpoint_metric", "curve_rmse")
+    history_steps = int(training_cfg.get("latent_history_steps", 5))
+    curve_weight = float(training_cfg.get("curve_loss_weight", 1.0))
+
     print(f"Stage B ablation: {ablation_name}")
+    print(f"SDE history steps: {history_steps} | curve_loss_weight: {curve_weight}")
+    print(f"Checkpoint metric: {checkpoint_metric}")
 
     latent_dir = training_cfg.get("latent_dir", "reports/latents/stage_a")
     processed_dir = training_cfg.get("processed_dir", "data/processed")
     lookback = int(training_cfg.get("lookback", 21))
     horizon = int(training_cfg.get("horizon", 1))
     dt = float(training_cfg.get("dt", 1.0))
+
+    if lookback < history_steps:
+        raise ValueError(
+            f"lookback ({lookback}) must be >= latent_history_steps ({history_steps})."
+        )
 
     loaders = build_latent_window_dataloaders(
         latent_dir=latent_dir,
@@ -278,7 +317,7 @@ def train_stage_b(config, ablation_override=None):
     )
 
     stage_a = load_stage_a_checkpoint(config, device)
-    sde = LatentNeuralSDE(latent_dim=int(model_cfg.get("latent_dim", 3))).to(device)
+    sde = build_latent_neural_sde(config).to(device)
 
     optimizer = torch.optim.Adam(
         sde.parameters(),
@@ -291,7 +330,7 @@ def train_stage_b(config, ablation_override=None):
     forecast_dir.mkdir(parents=True, exist_ok=True)
 
     epochs = int(training_cfg.get("epochs_stage_b", 150))
-    best_val_loss = float("inf")
+    best_metric_value = float("inf")
     best_state = None
     history = []
 
@@ -310,7 +349,8 @@ def train_stage_b(config, ablation_override=None):
 
         print(
             f"Epoch {epoch:03d} | "
-            f"Train loss {train_metrics['loss']:.4f} (fit {train_metrics['fit']:.4f}, "
+            f"Train loss {train_metrics['loss']:.4f} "
+            f"(fit {train_metrics['fit']:.4f}, curve {train_metrics['curve_loss']:.4f}, "
             f"constraint {train_metrics['constraint']:.4f}) | "
             f"Val loss {val_metrics['loss']:.4f} | "
             f"Val accuracy: latent_rmse {val_metrics['latent_rmse']:.4f}, "
@@ -318,12 +358,15 @@ def train_stage_b(config, ablation_override=None):
             f"curve_mae {val_metrics['curve_mae']:.4f}"
         )
 
-        if val_metrics["loss"] < best_val_loss:
-            best_val_loss = val_metrics["loss"]
+        metric_value = val_metrics.get(checkpoint_metric, val_metrics["curve_rmse"])
+        if metric_value < best_metric_value:
+            best_metric_value = metric_value
             best_state = copy.deepcopy(sde.state_dict())
 
     if best_state is not None:
         sde.load_state_dict(best_state)
+
+    best_curve_rmse = min(row["val"]["curve_rmse"] for row in history) if history else float("inf")
 
     ckpt_path = checkpoint_dir / f"stage_b_{ablation_name}_best.pt"
     torch.save(
@@ -332,12 +375,18 @@ def train_stage_b(config, ablation_override=None):
             "config": config,
             "ablation": ablation_name,
             "ablation_flags": ablation_flags,
-            "best_val_loss": best_val_loss,
+            "best_val_loss": min(row["val"]["loss"] for row in history) if history else float("inf"),
+            "best_val_curve_rmse": best_curve_rmse,
+            "checkpoint_metric": checkpoint_metric,
+            "best_checkpoint_metric": best_metric_value,
             "history": history,
         },
         ckpt_path,
     )
-    print(f"Saved best Stage B checkpoint: {ckpt_path.resolve()}")
+    print(
+        f"Saved best Stage B checkpoint: {ckpt_path.resolve()} "
+        f"(best {checkpoint_metric}={best_metric_value:.4f}, best curve_rmse={best_curve_rmse:.4f})"
+    )
 
     history_path = checkpoint_dir / f"stage_b_{ablation_name}_history.json"
     history_path.write_text(json.dumps(history, indent=2), encoding="utf-8")

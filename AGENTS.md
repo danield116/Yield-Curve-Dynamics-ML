@@ -138,16 +138,17 @@ python experiments/run_full_comparison.py
 
 - **Stage A default:** `student_t_cvae` with `use_levelscript: true`
 - **Neural SDE uses Tanh** (stability); VAE/CVAE use ReLU — not empirically ablated yet
-- **Stage B fit loss:** one-step `z_pred = z_t + mu_P(z_t)*dt` vs true `z_{t+1}`
+- **Stage B fit loss:** latent MSE + `curve_loss_weight` * curve MSE + optional constraints
+- **Stage B checkpoint:** saved on `checkpoint_metric` (default `curve_rmse`)
+- **SDE input:** last `latent_history_steps` latent vectors (default 5), not only z_t
 - **Constraints are soft penalties** during training; diagnostics also used at eval
 - **AlphaVantage not recommended** — less tenor coverage than FRED, API limits
 - **Local training not required** — Colab GPU preferred, especially for PDE/Jacobian ablations
 
 ## Suggested next tasks (priority)
 
-1. Re-run Stage B ablations on Colab after Jacobian fix (`sde_jacobian`, `sde_both`)
-2. Optional: `model.sde_activation` config flag (tanh vs relu ablation)
-3. Optional: enable `include_hessian: true` PDE ablation experiment
+1. Re-run Stage B on Colab with new curve loss + latent history (old checkpoints incompatible)
+2. Confirm test `curve_rmse` beats `persistence` baseline, then chase `nss` / `pca_var`
 
 ## References
 

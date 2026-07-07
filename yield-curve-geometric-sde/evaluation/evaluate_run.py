@@ -15,6 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from baselines.nelson_siegel import rolling_forecast_nss
+from baselines.persistence import rolling_forecast_persistence
 from baselines.pca_var import rolling_forecast_pca_var
 from data.dataloaders import build_latent_window_dataloaders, build_pointwise_dataloaders
 from evaluation.arbitrage_diagnostics import curve_arbitrage_metrics
@@ -26,42 +27,19 @@ from evaluation.metrics import (
     save_scorecard,
     segment_errors,
 )
-from models.neural_sde import LatentNeuralSDE
 from training.manifold_ops import make_manifold_ops
+from training.sde_utils import roll_latent_forecast
 from training.train_stage_a import (
     build_stage_a_model,
     forward_model,
     load_config,
     prepare_batch,
 )
-from training.train_stage_b import ABLATION_PRESETS, load_stage_a_checkpoint
+from training.train_stage_b import ABLATION_PRESETS, load_stage_a_checkpoint, load_stage_b_checkpoint
 
 
 def get_device():
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-def load_stage_b_checkpoint(config, ablation: str, device, checkpoint_path=None):
-    training_cfg = config.get("training", {})
-    model_cfg = config.get("model", {})
-
-    if checkpoint_path is None:
-        checkpoint_path = training_cfg.get(
-            "checkpoint_dir_stage_b",
-            "reports/checkpoints/stage_b",
-        )
-        checkpoint_path = Path(checkpoint_path) / f"stage_b_{ablation}_best.pt"
-    else:
-        checkpoint_path = Path(checkpoint_path)
-
-    if not checkpoint_path.exists():
-        raise FileNotFoundError(f"Stage B checkpoint not found: {checkpoint_path}")
-
-    sde = LatentNeuralSDE(latent_dim=int(model_cfg.get("latent_dim", 3))).to(device)
-    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
-    sde.load_state_dict(checkpoint["sde_state_dict"])
-    sde.eval()
-    return sde, checkpoint
 
 
 @torch.no_grad()
@@ -163,10 +141,8 @@ def evaluate_stage_b_forecast(
 
     for batch in loader:
         batch = {k: v.to(device) for k, v in batch.items()}
-        z0 = batch["z_hist"][:, -1, :]
-        z = z0
-        for _ in range(horizon):
-            z = z + sde.drift_p(z) * dt
+        z_hist = batch["z_hist"]
+        z = roll_latent_forecast(sde, z_hist, horizon=horizon, dt=dt, stochastic=False)
 
         level = None
         if use_levelscript:
@@ -199,6 +175,7 @@ def evaluate_stage_b_forecast(
         "segments": segment_errors(y_true, y_pred),
         "arbitrage": arb,
         "best_val_loss": float(checkpoint.get("best_val_loss", np.nan)),
+        "best_val_curve_rmse": float(checkpoint.get("best_val_curve_rmse", np.nan)),
     }
 
 
@@ -218,7 +195,9 @@ def evaluate_baseline(
     train = splits.train.numpy()
     test = splits.test.numpy() if split == "test" else splits.val.numpy()
 
-    if baseline_name == "pca_var":
+    if baseline_name == "persistence":
+        y_true, y_pred = rolling_forecast_persistence(train, test, lookback=lookback, horizon=horizon)
+    elif baseline_name == "pca_var":
         y_true, y_pred = rolling_forecast_pca_var(train, test, lookback=lookback, horizon=horizon)
     elif baseline_name in ("nss", "nelson_siegel", "nelson_siegel_svensson"):
         y_true, y_pred = rolling_forecast_nss(train, test, lookback=lookback, horizon=horizon)
@@ -252,7 +231,7 @@ def evaluate_run(
     eval_cfg = config.get("evaluation", {})
     horizons = horizons or eval_cfg.get("horizons", [1, 5, 21, 63])
     ablations = ablations or list(ABLATION_PRESETS.keys())
-    baselines = baselines if baselines is not None else eval_cfg.get("baselines", ["pca_var", "nss"])
+    baselines = baselines if baselines is not None else eval_cfg.get("baselines", ["persistence", "pca_var", "nss"])
     device = device or get_device()
 
     rows = []
