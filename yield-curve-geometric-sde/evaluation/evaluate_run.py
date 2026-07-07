@@ -334,11 +334,22 @@ def main():
     parser.add_argument("--split", default="test", choices=["train", "val", "test"])
     parser.add_argument("--output-dir", default="reports/comparison")
     parser.add_argument("--skip-stage-a", action="store_true")
+    parser.add_argument(
+        "--allow-missing-stage-b",
+        action="store_true",
+        help="Do not error when no Stage B checkpoints were evaluated.",
+    )
     args = parser.parse_args()
 
     config = load_config(Path(args.config))
     tenors = config.get("data", {}).get("tenors")
     rows = evaluate_run(config, split=args.split, include_stage_a=not args.skip_stage_a)
+    stage_b_rows = [r for r in rows if str(r.get("model", "")).startswith("stage_b_")]
+    if not stage_b_rows and not args.allow_missing_stage_b:
+        raise SystemExit(
+            "No Stage B results in scorecard. Train Stage B first "
+            "(colab cell 7) and confirm reports/checkpoints/stage_b/stage_b_*_best.pt exist."
+        )
     output_dir = Path(args.output_dir)
     csv_path = save_scorecard(rows, output_dir, tenors=tenors)
     figures_dir = save_evaluation_plots(rows, output_dir, config)
