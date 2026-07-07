@@ -138,9 +138,12 @@ python experiments/run_full_comparison.py
 
 - **Stage A default:** `student_t_cvae` with `use_levelscript: true`
 - **Neural SDE uses Tanh** (stability); VAE/CVAE use ReLU — not empirically ablated yet
-- **Stage B fit loss:** latent MSE + `curve_loss_weight` * curve MSE + optional constraints
+- **Stage B fit loss:** `latent_fit_weight` * latent MSE + `curve_loss_weight` * curve MSE + optional constraints
+- **Stage B training horizons:** random sample from `train_horizons` (default `[1,5,21]`); val uses `val_horizon` (default `1`)
 - **Stage B checkpoint:** saved on `checkpoint_metric` (default `curve_rmse`)
-- **SDE input:** last `latent_history_steps` latent vectors (default 5), not only z_t
+- **SDE input:** last `latent_history_steps` latent vectors (default 10), not only z_t
+- **LevelScript decode at forecast:** uses last known level from `y_hist`, not future `y_fut` (no lookahead)
+- **Stage A KL:** `kl_weight` default `0.1` (lower KL → better reconstruction for Stage B)
 - **Constraints are soft penalties** during training; diagnostics also used at eval
 - **AlphaVantage not recommended** — less tenor coverage than FRED, API limits
 - **Local training not required** — Colab GPU preferred, especially for PDE/Jacobian ablations

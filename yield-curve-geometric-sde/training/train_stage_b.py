@@ -104,35 +104,42 @@ def make_full_curve_decoder(stage_a, level, use_levelscript):
     return decode_fn
 
 
-def compute_stage_b_loss(batch, sde, stage_a, config, ablation_flags, dt=1.0):
+def compute_stage_b_loss(batch, sde, stage_a, config, ablation_flags, dt=1.0, forecast_horizon=1):
     """Composite Stage B loss: latent fit + curve fit + optional constraints."""
     data_cfg = config.get("data", {})
     training_cfg = config.get("training", {})
     use_levelscript = bool(data_cfg.get("use_levelscript", False))
     level_tenor_index = int(data_cfg.get("level_tenor_index", 3))
     history_steps = int(training_cfg.get("latent_history_steps", 5))
+    latent_weight = float(training_cfg.get("latent_fit_weight", 0.05))
     curve_weight = float(training_cfg.get("curve_loss_weight", 1.0))
 
     z_hist = batch["z_hist"]
     z_fut = batch["z_fut"]
     y_fut = batch["y_fut"]
+    y_hist = batch["y_hist"]
+    forecast_horizon = max(1, int(forecast_horizon))
 
-    sde_input = build_sde_input(z_hist, history_steps)
-    z_t = z_hist[:, -1, :]
-    z_target = z_fut[:, 0, :]
-    z_pred = z_t + sde.drift_p(sde_input) * dt
-    fit_loss = F.mse_loss(z_pred, z_target)
+    z_window = z_hist
+    z_t = z_window[:, -1, :]
+    for _ in range(forecast_horizon):
+        sde_input = build_sde_input(z_window, history_steps)
+        z_t = z_t + sde.drift_p(sde_input) * dt
+        z_window = torch.cat([z_window[:, 1:, :], z_t.unsqueeze(1)], dim=1)
+
+    z_target = z_fut[:, forecast_horizon - 1, :]
+    fit_loss = F.mse_loss(z_t, z_target)
 
     level = None
     if use_levelscript:
-        level = y_fut[:, 0, level_tenor_index : level_tenor_index + 1]
+        level = y_hist[:, -1, level_tenor_index : level_tenor_index + 1]
 
     decode_fn = make_full_curve_decoder(stage_a, level, use_levelscript)
-    y_true = y_fut[:, 0, :]
-    y_pred_curve = decode_fn(z_pred)
+    y_true = y_fut[:, forecast_horizon - 1, :]
+    y_pred_curve = decode_fn(z_t)
     curve_loss = F.mse_loss(y_pred_curve, y_true)
 
-    loss = fit_loss + curve_weight * curve_loss
+    loss = latent_weight * fit_loss + curve_weight * curve_loss
 
     metrics = {
         "loss": loss.item(),
@@ -148,13 +155,15 @@ def compute_stage_b_loss(batch, sde, stage_a, config, ablation_flags, dt=1.0):
         encode_fn, _ = make_manifold_ops(
             stage_a, level, use_levelscript, level_tenor_index=level_tenor_index
         )
-        y_constraint = linearized_curve_forecast(decode_fn, z_t, z_pred)
+        z_start = z_hist[:, -1, :]
+        y_constraint = linearized_curve_forecast(decode_fn, z_start, z_t)
+        sde_input = build_sde_input(z_hist, history_steps)
         mu_q = sde.drift_q(sde_input)
         sigma = sde.diffusion(sde_input)
 
         constraint_loss = total_constraint_loss(
             y=y_constraint,
-            z=z_t,
+            z=z_start,
             decoder=decode_fn,
             encoder=stage_a,
             encode_fn=encode_fn,
@@ -182,6 +191,10 @@ def run_epoch(sde, stage_a, loader, optimizer, device, config, ablation_flags, d
     else:
         sde.eval()
 
+    training_cfg = config.get("training", {})
+    train_horizons = [int(h) for h in training_cfg.get("train_horizons", [1])]
+    val_horizon = int(training_cfg.get("val_horizon", 1))
+
     totals = {
         "loss": 0.0,
         "fit": 0.0,
@@ -198,6 +211,9 @@ def run_epoch(sde, stage_a, loader, optimizer, device, config, ablation_flags, d
 
         if train:
             optimizer.zero_grad()
+            forecast_horizon = int(np.random.choice(train_horizons))
+        else:
+            forecast_horizon = val_horizon
 
         loss, metrics = compute_stage_b_loss(
             batch=batch,
@@ -206,6 +222,7 @@ def run_epoch(sde, stage_a, loader, optimizer, device, config, ablation_flags, d
             config=config,
             ablation_flags=ablation_flags,
             dt=dt,
+            forecast_horizon=forecast_horizon,
         )
 
         if train:
@@ -254,7 +271,7 @@ def save_forecast_paths(sde, stage_a, loader, device, config, output_path, dt=1.
         z_path = torch.stack(z_sim, dim=1)
         level = None
         if use_levelscript:
-            level = batch["y_fut"][:, 0, level_tenor_index : level_tenor_index + 1]
+            level = batch["y_hist"][:, -1, level_tenor_index : level_tenor_index + 1]
 
         decode_fn = make_full_curve_decoder(stage_a, level, use_levelscript)
         y_path = torch.stack([decode_fn(z_path[:, t, :]) for t in range(z_path.shape[1])], dim=1)
@@ -290,21 +307,33 @@ def train_stage_b(config, ablation_override=None):
     ablation_name = ablation_flags["ablation"]
     checkpoint_metric = training_cfg.get("checkpoint_metric", "curve_rmse")
     history_steps = int(training_cfg.get("latent_history_steps", 5))
+    latent_weight = float(training_cfg.get("latent_fit_weight", 0.05))
     curve_weight = float(training_cfg.get("curve_loss_weight", 1.0))
+    train_horizons = [int(h) for h in training_cfg.get("train_horizons", [1])]
+    val_horizon = int(training_cfg.get("val_horizon", 1))
 
     print(f"Stage B ablation: {ablation_name}")
-    print(f"SDE history steps: {history_steps} | curve_loss_weight: {curve_weight}")
+    print(
+        f"SDE history steps: {history_steps} | "
+        f"latent_fit_weight: {latent_weight} | curve_loss_weight: {curve_weight}"
+    )
+    print(f"Train horizons: {train_horizons} | val horizon: {val_horizon}")
     print(f"Checkpoint metric: {checkpoint_metric}")
 
     latent_dir = training_cfg.get("latent_dir", "reports/latents/stage_a")
     processed_dir = training_cfg.get("processed_dir", "data/processed")
     lookback = int(training_cfg.get("lookback", 21))
-    horizon = int(training_cfg.get("horizon", 1))
+    horizon = int(training_cfg.get("horizon", max(max(train_horizons), val_horizon)))
     dt = float(training_cfg.get("dt", 1.0))
 
     if lookback < history_steps:
         raise ValueError(
             f"lookback ({lookback}) must be >= latent_history_steps ({history_steps})."
+        )
+    if horizon < max(max(train_horizons), val_horizon):
+        raise ValueError(
+            f"horizon ({horizon}) must be >= max(train_horizons, val_horizon) "
+            f"({max(max(train_horizons), val_horizon)})."
         )
 
     loaders = build_latent_window_dataloaders(
@@ -321,7 +350,7 @@ def train_stage_b(config, ablation_override=None):
 
     optimizer = torch.optim.Adam(
         sde.parameters(),
-        lr=float(training_cfg.get("learning_rate", 1e-3)),
+        lr=float(training_cfg.get("learning_rate_stage_b", training_cfg.get("learning_rate", 1e-3))),
     )
 
     checkpoint_dir = Path(training_cfg.get("checkpoint_dir_stage_b", "reports/checkpoints/stage_b"))

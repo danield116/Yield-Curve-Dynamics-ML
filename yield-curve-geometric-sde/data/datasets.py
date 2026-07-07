@@ -113,8 +113,9 @@ class LatentWindowDataset(Dataset):
 
     Returns:
     - z_hist: [lookback, latent_dim]
+    - y_hist: [lookback, N_tenors]
     - z_fut:  [horizon, latent_dim]
-    - y_fut:  [horizon, N_tenors]  (for level conditioning / constraint decode)
+    - y_fut:  [horizon, N_tenors]  (targets for forecast horizons)
     """
 
     def __init__(self, latents, curves, lookback=21, horizon=1):
@@ -143,6 +144,7 @@ class LatentWindowDataset(Dataset):
         end = mid + self.horizon
         return {
             "z_hist": self.latents[start:mid],
+            "y_hist": self.curves[start:mid],
             "z_fut": self.latents[mid:end],
             "y_fut": self.curves[mid:end],
         }

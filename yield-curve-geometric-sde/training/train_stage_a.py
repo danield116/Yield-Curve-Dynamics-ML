@@ -123,7 +123,8 @@ def compute_stage_a_loss(model, curves, config):
         recon = F.mse_loss(x_hat, x)
 
     kl = kl_divergence(mu, logvar)
-    loss = recon + kl
+    kl_weight = float(config.get("training", {}).get("kl_weight", 1.0))
+    loss = recon + kl_weight * kl
 
     with torch.no_grad():
         if use_levelscript and level is not None:

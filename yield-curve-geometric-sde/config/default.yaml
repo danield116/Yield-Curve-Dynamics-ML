@@ -15,14 +15,17 @@ data:
 
 model:
   latent_dim: 3
+  hidden_dim: 128
   stage_a_variant: student_t_cvae
   stage_b_variant: neural_sde
 
 training:
   batch_size: 128
-  epochs_stage_a: 100
-  epochs_stage_b: 150
+  epochs_stage_a: 150
+  epochs_stage_b: 250
   learning_rate: 0.001
+  learning_rate_stage_b: 0.0003
+  kl_weight: 0.1
   processed_dir: "data/processed"
   checkpoint_dir: "reports/checkpoints/stage_a"
   latent_dir: "reports/latents/stage_a"
@@ -30,10 +33,13 @@ training:
   checkpoint_dir_stage_b: "reports/checkpoints/stage_b"
   forecast_dir: "reports/forecasts/stage_b"
   lookback: 21
-  horizon: 1
+  horizon: 21
+  train_horizons: [1, 5, 21]
+  val_horizon: 1
   dt: 1.0
-  latent_history_steps: 5
-  curve_loss_weight: 1.0
+  latent_history_steps: 10
+  latent_fit_weight: 0.05
+  curve_loss_weight: 10.0
   checkpoint_metric: "curve_rmse"
 
 constraints:

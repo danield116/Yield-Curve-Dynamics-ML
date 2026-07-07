@@ -146,7 +146,7 @@ def evaluate_stage_b_forecast(
 
         level = None
         if use_levelscript:
-            level = batch["y_fut"][:, 0, level_tenor_index : level_tenor_index + 1]
+            level = batch["y_hist"][:, -1, level_tenor_index : level_tenor_index + 1]
 
         _, decode_fn = make_manifold_ops(stage_a, level, use_levelscript, level_tenor_index)
         y_pred = decode_fn(z)
