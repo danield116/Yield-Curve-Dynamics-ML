@@ -155,8 +155,9 @@ python experiments/run_full_comparison.py
   - `manifold_correction_gain` = `off_manifold(y_pred) - off_manifold(y_persist)` (isolates dynamics; **negative = forecast pulled closer to manifold than persistence**; Jacobian should be most negative)
   - `tangent_move_residual_rmse` = off-tangent component of decoded latent move at `z_last` (lower = move stays in decoder tangent space)
   - Superseded/removed: `manifold_delta_off_manifold_rmse` was algebraically identical to `manifold_off_manifold_rmse` (the `y_prev` term cancels) — do not reintroduce
-- **Stage A KL:** `kl_weight` default `0.03` (lower KL → better reconstruction → lower manifold floor so constraints help rather than hurt)
-- **Stage A capacity (tuned to lower recon floor):** `latent_dim=5`, `hidden_dim=256`, `epochs_stage_a=200` — expands manifold so on-manifold ≈ real curves, giving Jacobian a chance to improve (not just preserve) RMSE
+- **Stage A KL:** `kl_weight` default `0.01` (lower KL → better reconstruction → lower manifold floor so constraints help rather than hurt)
+- **Stage A capacity (tuned to lower recon floor):** `latent_dim=5`, `hidden_dim=384`, `epochs_stage_a=300` — expands manifold so on-manifold ≈ real curves, giving Jacobian a chance to improve (not just preserve) RMSE
+- **Keep `latent_dim` low (5), grow `hidden_dim`/epochs instead:** raising `latent_dim` enlarges the decoder tangent space the Jacobian projects onto, making the constraint *less* restrictive and diluting its effect. Lower recon via decoder capacity + lower KL, NOT more latent dims.
 - **Stage B convergence:** `epochs_stage_b=400`, `lr_schedule_stage_b=cosine` — constrained models need more/steadier training to pay off
 - **IMPORTANT:** changing `latent_dim`/`hidden_dim` invalidates ALL prior Stage A + Stage B checkpoints and latents — must retrain the full pipeline from Stage A
 - **Constraints are soft penalties** during training; diagnostics also used at eval

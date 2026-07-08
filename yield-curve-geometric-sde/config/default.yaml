@@ -15,18 +15,18 @@ data:
 
 model:
   latent_dim: 5
-  hidden_dim: 256
+  hidden_dim: 384
   stage_a_variant: student_t_cvae
   stage_b_variant: neural_sde
 
 training:
   batch_size: 128
-  epochs_stage_a: 200
+  epochs_stage_a: 300
   epochs_stage_b: 400
   learning_rate: 0.001
   learning_rate_stage_b: 0.0003
   lr_schedule_stage_b: "cosine"
-  kl_weight: 0.03
+  kl_weight: 0.01
   processed_dir: "data/processed"
   checkpoint_dir: "reports/checkpoints/stage_a"
   latent_dir: "reports/latents/stage_a"
