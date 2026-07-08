@@ -148,6 +148,11 @@ python experiments/run_full_comparison.py
 - **Constraint weights (tuned):** `pde_penalty_weight=0.001`, `jacobian_projection_weight=0.1`
 - **Jacobian warmup:** `jacobian_warmup_epochs=40` to separate from `sde_only` after fit stabilizes
 - **Eval geometry tables:** `reports/comparison/constraint_ablation_h1.csv`, `h5.csv`, `h21.csv` + arb/manifold bar plots
+- **Geometry metrics (non-redundant):**
+  - `manifold_off_manifold_rmse` = `||y_pred - D(E(y_pred))||` (absolute; dominated by persistence anchor offset, looks flat across ablations)
+  - `manifold_correction_gain` = `off_manifold(y_pred) - off_manifold(y_persist)` (isolates dynamics; **negative = forecast pulled closer to manifold than persistence**; Jacobian should be most negative)
+  - `tangent_move_residual_rmse` = off-tangent component of decoded latent move at `z_last` (lower = move stays in decoder tangent space)
+  - Superseded/removed: `manifold_delta_off_manifold_rmse` was algebraically identical to `manifold_off_manifold_rmse` (the `y_prev` term cancels) — do not reintroduce
 - **Stage A KL:** `kl_weight` default `0.1` (lower KL → better reconstruction for Stage B)
 - **Constraints are soft penalties** during training; diagnostics also used at eval
 - **AlphaVantage not recommended** — less tenor coverage than FRED, API limits

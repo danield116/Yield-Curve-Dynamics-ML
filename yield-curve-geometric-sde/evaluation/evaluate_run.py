@@ -21,8 +21,9 @@ from baselines.pca_var import rolling_forecast_pca_var
 from data.dataloaders import build_latent_window_dataloaders, build_pointwise_dataloaders
 from evaluation.arbitrage_diagnostics import curve_arbitrage_metrics
 from evaluation.manifold_metrics import (
-    manifold_delta_off_manifold_rmse,
+    manifold_correction_gain,
     manifold_off_manifold_rmse,
+    tangent_move_residual_rmse,
 )
 from evaluation.metrics import (
     constraint_ablation_summary,
@@ -145,13 +146,15 @@ def evaluate_stage_b_forecast(
     z_true_all = []
     z_pred_all = []
     manifold_sq = 0.0
-    manifold_delta_sq = 0.0
+    correction_gain_sum = 0.0
+    tangent_sq = 0.0
     manifold_n = 0
 
     for batch in loader:
         batch = {k: v.to(device) for k, v in batch.items()}
         z_hist = batch["z_hist"]
         z = roll_latent_forecast(sde, z_hist, horizon=horizon, dt=dt, stochastic=False)
+        z_last = z_hist[:, -1, :]
 
         level = None
         if use_levelscript:
@@ -167,11 +170,14 @@ def evaluate_stage_b_forecast(
         z_true = batch["z_fut"][:, horizon - 1, :]
         y_prev = batch["y_hist"][:, -1, :]
 
+        bsz = y_pred.shape[0]
         batch_manifold = manifold_off_manifold_rmse(y_pred, encode_fn, decode_fn)
-        batch_delta_manifold = manifold_delta_off_manifold_rmse(y_prev, y_pred, encode_fn, decode_fn)
-        manifold_sq += batch_manifold**2 * y_pred.shape[0]
-        manifold_delta_sq += batch_delta_manifold**2 * y_pred.shape[0]
-        manifold_n += y_pred.shape[0]
+        batch_gain = manifold_correction_gain(y_pred, y_prev, encode_fn, decode_fn)
+        batch_tangent = tangent_move_residual_rmse(z_last, z, decode_fn)
+        manifold_sq += batch_manifold**2 * bsz
+        correction_gain_sum += batch_gain * bsz
+        tangent_sq += batch_tangent**2 * bsz
+        manifold_n += bsz
 
         y_true_all.append(y_true.cpu().numpy())
         y_pred_all.append(y_pred.cpu().numpy())
@@ -184,7 +190,8 @@ def evaluate_stage_b_forecast(
     z_pred = np.concatenate(z_pred_all, axis=0)
     arb = curve_arbitrage_metrics(y_pred)
     manifold_rmse = float(np.sqrt(manifold_sq / max(manifold_n, 1)))
-    manifold_delta_rmse = float(np.sqrt(manifold_delta_sq / max(manifold_n, 1)))
+    manifold_correction = float(correction_gain_sum / max(manifold_n, 1))
+    tangent_residual = float(np.sqrt(tangent_sq / max(manifold_n, 1)))
 
     return {
         "model": f"stage_b_{ablation}",
@@ -194,7 +201,8 @@ def evaluate_stage_b_forecast(
         "curve_mae_mean": float(mae_by_tenor(y_true, y_pred).mean()),
         "latent_rmse": latent_rmse(z_true, z_pred),
         "manifold_off_manifold_rmse": manifold_rmse,
-        "manifold_delta_off_manifold_rmse": manifold_delta_rmse,
+        "manifold_correction_gain": manifold_correction,
+        "tangent_move_residual_rmse": tangent_residual,
         "rmse_by_tenor": rmse_by_tenor(y_true, y_pred),
         "segments": segment_errors(y_true, y_pred),
         "arbitrage": arb,
@@ -331,7 +339,8 @@ def save_evaluation_plots(rows: list[dict], output_dir: str | Path, config: dict
     ]
     for metric_key, file_stub in [
         ("manifold_off_manifold_rmse", "manifold_off_manifold_rmse"),
-        ("manifold_delta_off_manifold_rmse", "manifold_delta_off_manifold_rmse"),
+        ("manifold_correction_gain", "manifold_correction_gain"),
+        ("tangent_move_residual_rmse", "tangent_move_residual_rmse"),
         ("arb_forward_smoothness", "arb_forward_smoothness"),
         ("arb_discount_monotonicity_violations", "arb_discount_monotonicity_violations"),
         ("arb_scenario_stability", "arb_scenario_stability"),
@@ -416,8 +425,10 @@ def main():
             print(f"\n=== Constraint ablation summary (h={summary_h}; lower is better) ===")
             print(scorecard_frame.to_string(index=False))
     print(
-        "\nInterpretation: compare stage_b_sde_jacobian vs stage_b_sde_pde on "
-        "manifold_delta_off_manifold_rmse first, then manifold_off_manifold_rmse and arb_*."
+        "\nInterpretation: manifold_correction_gain isolates the dynamics contribution "
+        "(negative = forecast pulled closer to the manifold than persistence). Jacobian "
+        "should be the most negative and lowest on tangent_move_residual_rmse, ideally "
+        "without hurting curve_rmse."
     )
 
     summary = []
