@@ -145,15 +145,20 @@ python experiments/run_full_comparison.py
 - **LevelScript decode at forecast:** uses last known level from `y_hist`, not future `y_fut` (no lookahead)
 - **Persistence-residual forecast:** `y_pred = y_last + decode(z_pred) - decode(z_last)` (matches persistence at zero drift)
 - **Constraint horizon gating:** PDE/diag apply on `pde_train_horizons` (default `[1]`); Jacobian on `jacobian_train_horizons` (default `[1,5,21]`)
-- **Constraint weights (tuned):** `pde_penalty_weight=0.001`, `jacobian_projection_weight=0.1`
+- **Constraint weights (tuned):** `pde_penalty_weight=0.001`, `jacobian_projection_weight=0.3`
+- **Projection method:** `tangent` (direct decoder-tangent projection) — cleaner geometry gradient than `reencode`
 - **Jacobian warmup:** `jacobian_warmup_epochs=40` to separate from `sde_only` after fit stabilizes
+- **Why Jacobian can/can't beat `sde_only` on RMSE:** projecting a forecast onto the manifold moves it *toward* `D(E(y))`; if Stage A recon is poor, real (off-manifold) curves are far from the manifold and projection *hurts* RMSE. Constraints only help accuracy once Stage A recon is low — hence the Stage A capacity bump below.
 - **Eval geometry tables:** `reports/comparison/constraint_ablation_h1.csv`, `h5.csv`, `h21.csv` + arb/manifold bar plots
 - **Geometry metrics (non-redundant):**
   - `manifold_off_manifold_rmse` = `||y_pred - D(E(y_pred))||` (absolute; dominated by persistence anchor offset, looks flat across ablations)
   - `manifold_correction_gain` = `off_manifold(y_pred) - off_manifold(y_persist)` (isolates dynamics; **negative = forecast pulled closer to manifold than persistence**; Jacobian should be most negative)
   - `tangent_move_residual_rmse` = off-tangent component of decoded latent move at `z_last` (lower = move stays in decoder tangent space)
   - Superseded/removed: `manifold_delta_off_manifold_rmse` was algebraically identical to `manifold_off_manifold_rmse` (the `y_prev` term cancels) — do not reintroduce
-- **Stage A KL:** `kl_weight` default `0.1` (lower KL → better reconstruction for Stage B)
+- **Stage A KL:** `kl_weight` default `0.03` (lower KL → better reconstruction → lower manifold floor so constraints help rather than hurt)
+- **Stage A capacity (tuned to lower recon floor):** `latent_dim=5`, `hidden_dim=256`, `epochs_stage_a=200` — expands manifold so on-manifold ≈ real curves, giving Jacobian a chance to improve (not just preserve) RMSE
+- **Stage B convergence:** `epochs_stage_b=400`, `lr_schedule_stage_b=cosine` — constrained models need more/steadier training to pay off
+- **IMPORTANT:** changing `latent_dim`/`hidden_dim` invalidates ALL prior Stage A + Stage B checkpoints and latents — must retrain the full pipeline from Stage A
 - **Constraints are soft penalties** during training; diagnostics also used at eval
 - **AlphaVantage not recommended** — less tenor coverage than FRED, API limits
 - **Local training not required** — Colab GPU preferred, especially for PDE/Jacobian ablations

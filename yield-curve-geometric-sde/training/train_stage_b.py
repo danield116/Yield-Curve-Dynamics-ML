@@ -417,6 +417,12 @@ def train_stage_b(config, ablation_override=None):
     forecast_dir.mkdir(parents=True, exist_ok=True)
 
     epochs = int(training_cfg.get("epochs_stage_b", 150))
+
+    scheduler = None
+    lr_schedule = str(training_cfg.get("lr_schedule_stage_b", "none")).lower()
+    if lr_schedule == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+        print(f"LR schedule: cosine annealing over {epochs} epochs")
     best_metric_value = float("inf")
     best_state = None
     history = []
@@ -444,6 +450,9 @@ def train_stage_b(config, ablation_override=None):
             f"curve_rmse {val_metrics['curve_rmse']:.4f}, "
             f"curve_mae {val_metrics['curve_mae']:.4f}"
         )
+
+        if scheduler is not None:
+            scheduler.step()
 
         metric_value = val_metrics.get(checkpoint_metric, val_metrics["curve_rmse"])
         if metric_value < best_metric_value:

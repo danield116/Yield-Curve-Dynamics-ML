@@ -14,18 +14,19 @@ data:
   level_tenor_index: 3
 
 model:
-  latent_dim: 3
-  hidden_dim: 128
+  latent_dim: 5
+  hidden_dim: 256
   stage_a_variant: student_t_cvae
   stage_b_variant: neural_sde
 
 training:
   batch_size: 128
-  epochs_stage_a: 150
-  epochs_stage_b: 250
+  epochs_stage_a: 200
+  epochs_stage_b: 400
   learning_rate: 0.001
   learning_rate_stage_b: 0.0003
-  kl_weight: 0.1
+  lr_schedule_stage_b: "cosine"
+  kl_weight: 0.03
   processed_dir: "data/processed"
   checkpoint_dir: "reports/checkpoints/stage_a"
   latent_dir: "reports/latents/stage_a"
@@ -45,10 +46,10 @@ training:
 
 constraints:
   ablation: "sde_only"
-  projection_method: "reencode"
+  projection_method: "tangent"
   include_hessian: false
   pde_penalty_weight: 0.001
-  jacobian_projection_weight: 0.1
+  jacobian_projection_weight: 0.3
   pde_train_horizons: [1]
   diag_train_horizons: [1]
   jacobian_train_horizons: [1, 5, 21]
