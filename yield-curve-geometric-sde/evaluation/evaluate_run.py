@@ -36,6 +36,7 @@ from evaluation.metrics import (
 )
 from training.manifold_ops import make_manifold_ops
 from training.sde_utils import persistence_residual_curve_forecast, roll_latent_forecast
+from constraints.jacobian_projection import project_curve_to_manifold
 from training.train_stage_a import (
     build_stage_a_model,
     forward_model,
@@ -118,15 +119,23 @@ def evaluate_stage_b_forecast(
     split: str = "test",
     horizon: int = 1,
     device=None,
+    hard_project: bool = False,
+    hard_project_method: str | None = None,
 ) -> dict:
     device = device or get_device()
     training_cfg = config.get("training", {})
     data_cfg = config.get("data", {})
+    constraints_cfg = config.get("constraints", {})
+    eval_cfg = config.get("evaluation", {})
 
     use_levelscript = bool(data_cfg.get("use_levelscript", False))
     level_tenor_index = int(data_cfg.get("level_tenor_index", 3))
     lookback = int(training_cfg.get("lookback", 21))
     dt = float(training_cfg.get("dt", 1.0))
+    projection_eps = float(constraints_cfg.get("projection_eps", 1e-5))
+    method = hard_project_method or eval_cfg.get(
+        "hard_project_method", constraints_cfg.get("projection_method", "tangent")
+    )
 
     loaders = build_latent_window_dataloaders(
         latent_dir=training_cfg.get("latent_dir", "reports/latents/stage_a"),
@@ -166,6 +175,22 @@ def evaluate_stage_b_forecast(
             y_pred = persistence_residual_curve_forecast(decode_fn, z_hist, batch["y_hist"], z)
         else:
             y_pred = decode_fn(z)
+
+        if hard_project:
+            # Eval-only hard manifold projection of the forecast curve.
+            # Uses the SDE endpoint z as the local chart center (tangent) or
+            # encode/decode (reencode). Does NOT change training.
+            y_pred = project_curve_to_manifold(
+                y_pred,
+                z,
+                encoder=stage_a,
+                decoder=decode_fn,
+                encode_fn=encode_fn,
+                decode_fn=decode_fn,
+                method=method,
+                eps=projection_eps,
+            )
+
         y_true = batch["y_fut"][:, horizon - 1, :]
         z_true = batch["z_fut"][:, horizon - 1, :]
         y_prev = batch["y_hist"][:, -1, :]
@@ -193,10 +218,16 @@ def evaluate_stage_b_forecast(
     manifold_correction = float(correction_gain_sum / max(manifold_n, 1))
     tangent_residual = float(np.sqrt(tangent_sq / max(manifold_n, 1)))
 
+    model_name = f"stage_b_{ablation}"
+    if hard_project:
+        model_name = f"{model_name}_hard"
+
     return {
-        "model": f"stage_b_{ablation}",
+        "model": model_name,
         "split": split,
         "horizon": horizon,
+        "hard_project": hard_project,
+        "hard_project_method": method if hard_project else None,
         "curve_rmse": mean_curve_rmse(y_true, y_pred),
         "curve_mae_mean": float(mae_by_tenor(y_true, y_pred).mean()),
         "latent_rmse": latent_rmse(z_true, z_pred),
@@ -259,12 +290,31 @@ def evaluate_run(
     baselines: list[str] | None = None,
     include_stage_a: bool = True,
     device=None,
+    compare_hard_project: bool | None = None,
 ) -> list[dict]:
     eval_cfg = config.get("evaluation", {})
     horizons = horizons or eval_cfg.get("horizons", [1, 5, 21, 63])
     ablations = ablations or list(ABLATION_PRESETS.keys())
     baselines = baselines if baselines is not None else eval_cfg.get("baselines", ["persistence", "pca_var", "nss"])
     device = device or get_device()
+
+    soft_hard_project = bool(eval_cfg.get("hard_project_at_eval", False))
+    if compare_hard_project is None:
+        compare_hard_project = bool(eval_cfg.get("compare_hard_project", False))
+    hard_method = eval_cfg.get("hard_project_method", "tangent")
+
+    # Primary path: soft forecasts (unless hard_project_at_eval replaces them).
+    # compare_hard_project adds stage_b_*_hard side rows without replacing soft.
+    if soft_hard_project:
+        project_modes = [True]
+        if compare_hard_project:
+            # Already hard-primary; soft companion would need a second pass without
+            # hard_project_at_eval. Keep simple: hard only when that flag is on.
+            pass
+    else:
+        project_modes = [False]
+        if compare_hard_project:
+            project_modes.append(True)
 
     rows = []
     if include_stage_a:
@@ -276,19 +326,23 @@ def evaluate_run(
         if not ckpt_path.exists():
             print(f"WARNING: Skipping missing Stage B checkpoint: {ckpt_path}")
             continue
-        for horizon in horizons:
-            try:
-                rows.append(
-                    evaluate_stage_b_forecast(
-                        config,
-                        ablation=ablation,
-                        split=split,
-                        horizon=horizon,
-                        device=device,
+        for hard in project_modes:
+            for horizon in horizons:
+                try:
+                    rows.append(
+                        evaluate_stage_b_forecast(
+                            config,
+                            ablation=ablation,
+                            split=split,
+                            horizon=horizon,
+                            device=device,
+                            hard_project=hard,
+                            hard_project_method=hard_method if hard else None,
+                        )
                     )
-                )
-            except Exception as exc:
-                print(f"Stage B {ablation} h={horizon} failed: {exc}")
+                except Exception as exc:
+                    tag = "_hard" if hard else ""
+                    print(f"Stage B {ablation}{tag} h={horizon} failed: {exc}")
 
     for baseline_name in baselines:
         for horizon in horizons:
@@ -397,13 +451,33 @@ def main():
         action="store_true",
         help="Do not error when no Stage B checkpoints were evaluated.",
     )
+    parser.add_argument(
+        "--compare-hard-project",
+        action="store_true",
+        help="Also evaluate hard manifold projection at inference (stage_b_*_hard rows). Overrides config if set.",
+    )
+    parser.add_argument(
+        "--no-compare-hard-project",
+        action="store_true",
+        help="Skip hard-projection side comparison even if config.evaluation.compare_hard_project is true.",
+    )
     args = parser.parse_args()
 
     config = load_config(Path(args.config))
     tenors = config.get("data", {}).get("tenors")
     eval_cfg = config.get("evaluation", {})
     summary_horizons = [int(h) for h in eval_cfg.get("constraint_summary_horizons", [1, 5, 21])]
-    rows = evaluate_run(config, split=args.split, include_stage_a=not args.skip_stage_a)
+    compare_hard = None
+    if args.compare_hard_project:
+        compare_hard = True
+    elif args.no_compare_hard_project:
+        compare_hard = False
+    rows = evaluate_run(
+        config,
+        split=args.split,
+        include_stage_a=not args.skip_stage_a,
+        compare_hard_project=compare_hard,
+    )
     stage_b_rows = [r for r in rows if str(r.get("model", "")).startswith("stage_b_")]
     if not stage_b_rows and not args.allow_missing_stage_b:
         raise SystemExit(
@@ -425,10 +499,11 @@ def main():
             print(f"\n=== Constraint ablation summary (h={summary_h}; lower is better) ===")
             print(scorecard_frame.to_string(index=False))
     print(
-        "\nInterpretation: manifold_correction_gain isolates the dynamics contribution "
-        "(negative = forecast pulled closer to the manifold than persistence). Jacobian "
-        "should be the most negative and lowest on tangent_move_residual_rmse, ideally "
-        "without hurting curve_rmse."
+        "\nInterpretation: soft rows are the paper primary (soft Jacobian penalty in training). "
+        "stage_b_*_hard rows apply an eval-only manifold projection after the soft forecast — "
+        "geometry should look better there, but curve_rmse may worsen if Stage A recon is still "
+        "far from the true (off-manifold) curves. manifold_correction_gain: negative = closer to "
+        "manifold than persistence. Jacobian should lead on tangent_move_residual_rmse."
     )
 
     summary = []
