@@ -1,0 +1,82 @@
+# Paper-primary config — Jacobian beats sde_only at trained horizons (h=1,5,21).
+# Frozen snapshot of default.yaml training/model/constraints (commit b9f7ee4 family).
+# Use: python training/train_stage_a.py --config config/paper_best.yaml
+#      python training/train_stage_b.py --config config/paper_best.yaml --ablation sde_jacobian
+#
+# Reference soft test scorecard (Colab GPU, seed 42; run-to-run RMSE may vary ~4th decimal):
+#   stage_a recon RMSE: 0.659
+#   h=1:  sde_jacobian 0.029167  |  sde_only 0.029175  |  persistence 0.029119
+#   h=5:  sde_jacobian 0.062944  |  sde_only 0.063010  |  persistence 0.062330
+#   h=21: sde_jacobian 0.122123  |  sde_only 0.122173  |  persistence 0.123750
+#   h=63: sde_jacobian 0.246372  |  sde_only 0.236540  |  persistence 0.202391  (extrapolation)
+#
+# default.yaml is kept in sync with this file for training hyperparameters.
+
+project:
+  name: geometric-no-arbitrage-yield-curve-dynamics
+  seed: 42
+
+data:
+  source: fred
+  start_date: "2001-07-01"
+  drop_incomplete_rows: true
+  tenors: ["1M", "3M", "6M", "1Y", "2Y", "3Y", "5Y", "7Y", "10Y", "20Y", "30Y"]
+  train_ratio: 0.7
+  val_ratio: 0.15
+  test_ratio: 0.15
+  use_levelscript: true
+  level_tenor_index: 3
+
+model:
+  latent_dim: 5
+  hidden_dim: 256
+  stage_a_variant: student_t_cvae
+  stage_b_variant: neural_sde
+
+training:
+  batch_size: 128
+  epochs_stage_a: 200
+  epochs_stage_b: 400
+  learning_rate: 0.001
+  learning_rate_stage_b: 0.0003
+  lr_schedule_stage_b: "cosine"
+  kl_weight: 0.03
+  processed_dir: "data/processed"
+  checkpoint_dir: "reports/checkpoints/stage_a"
+  latent_dir: "reports/latents/stage_a"
+  stage_a_checkpoint: "reports/checkpoints/stage_a/stage_a_student_t_cvae_best.pt"
+  checkpoint_dir_stage_b: "reports/checkpoints/stage_b"
+  forecast_dir: "reports/forecasts/stage_b"
+  lookback: 21
+  horizon: 21
+  train_horizons: [1, 5, 21]
+  val_horizon: 1
+  dt: 1.0
+  latent_history_steps: 10
+  latent_fit_weight: 0.05
+  curve_loss_weight: 10.0
+  use_persistence_residual: true
+  checkpoint_metric: "curve_rmse"
+
+constraints:
+  ablation: "sde_only"
+  projection_method: "tangent"
+  include_hessian: false
+  pde_penalty_weight: 0.001
+  jacobian_projection_weight: 0.3
+  pde_train_horizons: [1]
+  diag_train_horizons: [1]
+  jacobian_train_horizons: [1, 5, 21]
+  jacobian_warmup_epochs: 40
+  jacobian_weight_multiplier: 1.0
+  projection_eps: 1e-5
+
+evaluation:
+  horizons: [1, 5, 21, 63]
+  baselines: ["persistence", "pca_var", "nss"]
+  report_dir: "reports/comparison"
+  split: "test"
+  constraint_summary_horizons: [1, 5, 21]
+  hard_project_at_eval: false
+  compare_hard_project: true
+  hard_project_method: "tangent"

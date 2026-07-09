@@ -99,7 +99,7 @@ def main():
     )
     parser.add_argument(
         "--scorecard",
-        default=str(PROJECT_ROOT / "reports" / "comparison" / "paper_best_scorecard.csv"),
+        default=str(PROJECT_ROOT / "reports" / "best_model" / "scorecard.csv"),
         help="Input scorecard CSV.",
     )
     parser.add_argument(
@@ -109,7 +109,7 @@ def main():
     )
     parser.add_argument(
         "--output-dir",
-        default=str(PROJECT_ROOT / "reports" / "comparison" / "paper_best_figures"),
+        default=str(PROJECT_ROOT / "reports" / "best_model"),
         help="Directory for PNG outputs.",
     )
     args = parser.parse_args()
