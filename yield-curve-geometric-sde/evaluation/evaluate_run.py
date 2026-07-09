@@ -177,19 +177,19 @@ def evaluate_stage_b_forecast(
             y_pred = decode_fn(z)
 
         if hard_project:
-            # Eval-only hard manifold projection of the forecast curve.
-            # Uses the SDE endpoint z as the local chart center (tangent) or
-            # encode/decode (reencode). Does NOT change training.
-            y_pred = project_curve_to_manifold(
-                y_pred,
-                z,
-                encoder=stage_a,
-                decoder=decode_fn,
-                encode_fn=encode_fn,
-                decode_fn=decode_fn,
-                method=method,
-                eps=projection_eps,
-            )
+            # Tangent projection needs decoder Jacobians; enable_grad locally even
+            # though the surrounding forecast roll-out stays no-grad.
+            with torch.enable_grad():
+                y_pred = project_curve_to_manifold(
+                    y_pred,
+                    z,
+                    encoder=stage_a,
+                    decoder=decode_fn,
+                    encode_fn=encode_fn,
+                    decode_fn=decode_fn,
+                    method=method,
+                    eps=projection_eps,
+                )
 
         y_true = batch["y_fut"][:, horizon - 1, :]
         z_true = batch["z_fut"][:, horizon - 1, :]
@@ -316,10 +316,14 @@ def evaluate_run(
         if compare_hard_project:
             project_modes.append(True)
 
+    if compare_hard_project and not soft_hard_project:
+        print(f"Hard projection side comparison: method={hard_method!r}")
+
     rows = []
     if include_stage_a:
         rows.append(evaluate_stage_a_reconstruction(config, split=split, device=device))
 
+    hard_failures = 0
     for ablation in ablations:
         ckpt = Path(config.get("training", {}).get("checkpoint_dir_stage_b", "reports/checkpoints/stage_b"))
         ckpt_path = ckpt / f"stage_b_{ablation}_best.pt"
@@ -343,6 +347,16 @@ def evaluate_run(
                 except Exception as exc:
                     tag = "_hard" if hard else ""
                     print(f"Stage B {ablation}{tag} h={horizon} failed: {exc}")
+                    if hard:
+                        hard_failures += 1
+
+    if compare_hard_project and not soft_hard_project:
+        hard_rows = [r for r in rows if str(r.get("model", "")).endswith("_hard")]
+        print(f"Hard projection rows evaluated: {len(hard_rows)}")
+        if hard_failures:
+            print(f"WARNING: {hard_failures} hard-projection eval calls failed (see errors above).")
+        elif not hard_rows:
+            print("WARNING: No hard-projection rows in scorecard. git pull and re-run evaluate_run.")
 
     for baseline_name in baselines:
         for horizon in horizons:
