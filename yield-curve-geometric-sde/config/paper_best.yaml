@@ -1,3 +1,17 @@
+# Paper-primary config — Jacobian beats sde_only at trained horizons (h=1,5,21).
+# Frozen snapshot of default.yaml training/model/constraints (commit b9f7ee4 family).
+# Use: python training/train_stage_a.py --config config/paper_best.yaml
+#      python training/train_stage_b.py --config config/paper_best.yaml --ablation sde_jacobian
+#
+# Reference soft test scorecard (Colab GPU, seed 42; run-to-run RMSE may vary ~4th decimal):
+#   stage_a recon RMSE: 0.659
+#   h=1:  sde_jacobian 0.029167  |  sde_only 0.029175  |  persistence 0.029119
+#   h=5:  sde_jacobian 0.062944  |  sde_only 0.063010  |  persistence 0.062330
+#   h=21: sde_jacobian 0.122123  |  sde_only 0.122173  |  persistence 0.123750
+#   h=63: sde_jacobian 0.246372  |  sde_only 0.236540  |  persistence 0.202391  (extrapolation)
+#
+# default.yaml is kept in sync with this file for training hyperparameters.
+
 project:
   name: geometric-no-arbitrage-yield-curve-dynamics
   seed: 42
@@ -14,8 +28,6 @@ data:
   level_tenor_index: 3
 
 model:
-  # LOCKED paper config — see also config/paper_best.yaml (reference scorecard).
-  # Do not bump latent_dim; larger latent dilutes the Jacobian tangent constraint.
   latent_dim: 5
   hidden_dim: 256
   stage_a_variant: student_t_cvae
@@ -65,8 +77,6 @@ evaluation:
   report_dir: "reports/comparison"
   split: "test"
   constraint_summary_horizons: [1, 5, 21]
-  # Soft-penalty forecasts stay the paper primary. Hard projection is eval-only
-  # (no retrain); compare_hard_project emits extra stage_b_*_hard rows.
   hard_project_at_eval: false
   compare_hard_project: true
   hard_project_method: "tangent"
