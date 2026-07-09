@@ -117,6 +117,9 @@ python training/train_stage_b.py --ablation sde_pde
 # Evaluate (test split, multi-horizon + baselines)
 python evaluation/evaluate_run.py --split test --output-dir reports/comparison
 
+# Regenerate paper figures from saved best-run scorecard (no checkpoints)
+python evaluation/plot_from_scorecard.py
+
 # Full comparison (eval + plots; add --train-stage-a/b to retrain)
 python experiments/run_full_comparison.py
 ```
@@ -159,6 +162,7 @@ python experiments/run_full_comparison.py
   - `tangent_move_residual_rmse` = off-tangent component of decoded latent move at `z_last` (lower = move stays in decoder tangent space)
   - Superseded/removed: `manifold_delta_off_manifold_rmse` was algebraically identical to `manifold_off_manifold_rmse` (the `y_prev` term cancels) — do not reintroduce
 - **Paper config file:** `config/paper_best.yaml` — frozen snapshot + reference soft scorecard (Jacobian beats `sde_only` at h=1/5/21). `default.yaml` training hyperparameters match.
+- **Paper scorecard + plots (no checkpoints):** `reports/comparison/paper_best_scorecard.csv` and `python evaluation/plot_from_scorecard.py` → `reports/comparison/paper_best_figures/figures/*.png`
 - **Reference soft RMSE (best run, test split):** Stage A recon 0.659; h=1 jac 0.02917 vs only 0.02918; h=5 jac 0.06294 vs only 0.06301; h=21 jac 0.12212 vs only 0.12217 (both beat persistence 0.12375). h=63 extrapolation: only slightly ahead of jac.
 - **Stage A capacity (LOCKED):** `latent_dim=5`, `hidden_dim=256`, `epochs_stage_a=200` — the run where `sde_jacobian` edged `sde_only` at trained horizons. Do not bump `latent_dim`; that dilutes the tangent constraint. The later 384/0.01/300 recon push did not widen RMSE separation and slightly hurt short-horizon RMSE — leave it archived, not default.
 - **Keep `latent_dim` low (5), grow `hidden_dim`/epochs instead:** raising `latent_dim` enlarges the decoder tangent space the Jacobian projects onto, making the constraint *less* restrictive and diluting its effect.

@@ -1,0 +1,5 @@
+model,horizon,curve_rmse,curve_mae_mean,manifold_off_manifold_rmse,manifold_correction_gain,tangent_move_residual_rmse,arb_discount_monotonicity_violations,arb_forward_smoothness,arb_scenario_stability
+stage_b_sde_jacobian,5,0.062944,0.042892,0.656634,0.00341,0.000325,0.170483,0.037946,2.975236
+stage_b_sde_only,5,0.06301,0.042956,0.657195,0.003969,0.000338,0.170693,0.037881,2.974872
+stage_b_sde_both,5,0.196749,0.156318,0.510134,-0.143849,0.049348,0.056618,0.106035,3.023404
+stage_b_sde_pde,5,0.196749,0.156318,0.510134,-0.143849,0.049348,0.056618,0.106035,3.023404
