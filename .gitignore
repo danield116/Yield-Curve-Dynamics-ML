@@ -17,3 +17,8 @@ Thumbs.db
 # Generated data outputs from pipeline
 yield-curve-geometric-sde/data/raw/
 yield-curve-geometric-sde/data/processed/
+
+# Local paper drafts and unrelated notebooks (do not commit)
+*.tex
+Yield_Curve_Dynamics_Pred_Paper.pdf
+GeoGuesser_Primary_Model.ipynb

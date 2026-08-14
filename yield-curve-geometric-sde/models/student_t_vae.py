@@ -1,4 +1,4 @@
-"""Student-t VAE/CVAE scaffold for heavy-tailed yield moves."""
+"""Student-t CVAE for heavy-tailed yield reconstruction."""
 
 import math
 

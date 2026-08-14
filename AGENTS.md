@@ -29,14 +29,15 @@ Stage B ablations (not separate models — same pipeline, different penalties):
 
 ## What is implemented
 
-- [x] Repo scaffold + config
+- [x] Repo + config (`config/default.yaml`, `config/paper_best.yaml`)
 - [x] FRED data download + preprocess (start `2001-07-01`, drop incomplete rows before imputation)
 - [x] PyTorch datasets/dataloaders (pointwise + latent windows)
-- [x] Models: VAE, CVAE, Student-t CVAE, Neural SDE (scaffolds/skeletons)
+- [x] Models: VAE, CVAE, Student-t CVAE, Neural SDE
 - [x] Constraints: `bond_math`, `no_arbitrage_pde`, `jacobian_projection`
 - [x] `training/train_stage_a.py` — full training loop
 - [x] `training/train_stage_b.py` — full training + ablations
 - [x] `notebooks/colab_train.ipynb` — Colab pipeline (data → Stage A → all ablations)
+- [x] Evaluation scorecard, geometry metrics, baselines, frozen `reports/best_model/`
 
 ## What is still TODO
 
@@ -100,19 +101,13 @@ Training scripts **call** these modules; they do not define the equations.
 ```bash
 cd yield-curve-geometric-sde
 
-# Paper-primary config (Jacobian best run; same hyperparams as default.yaml)
-# config/paper_best.yaml
-
 # Data
 python data/download_fred_yields.py
 python data/preprocess_curves.py --levelscript
 
-# Stage A
+# Stage A / B (paper-primary config: config/paper_best.yaml; same hyperparams as default.yaml)
 python training/train_stage_a.py
-
-# Stage B (pick ablation)
-python training/train_stage_b.py --ablation sde_pde
-```
+python training/train_stage_b.py --ablation sde_jacobian
 
 # Evaluate (test split, multi-horizon + baselines)
 python evaluation/evaluate_run.py --split test --output-dir reports/comparison
@@ -134,11 +129,13 @@ python experiments/run_full_comparison.py
 
 ## Code style preferences
 
-- Readable, notebook-like Python (user referenced `GeoGuesser_Primary_Model.ipynb`)
+- Readable, notebook-like Python
 - Prefer simple functions over heavy abstraction
 - Minimize scope — focused diffs only
+- Comments only for non-obvious *why*; do not narrate obvious code or leave scaffold/TODO leftovers
 - Do not commit unless user asks
 - `__pycache__`, `data/raw/`, `data/processed/` are gitignored
+- **Do not commit paper drafts:** `*.tex`, `Yield_Curve_Dynamics_Pred_Paper.pdf`, or unrelated notebooks (`GeoGuesser_Primary_Model.ipynb`) — these are gitignored
 
 ## Design notes for next agent
 
@@ -149,8 +146,8 @@ python experiments/run_full_comparison.py
 - **Stage B checkpoint:** saved on `checkpoint_metric` (default `curve_rmse`)
 - **SDE input:** last `latent_history_steps` latent vectors (default 10), not only z_t
 - **LevelScript decode at forecast:** uses last known level from `y_hist`, not future `y_fut` (no lookahead)
-- **Persistence-residual forecast:** `y_pred = y_last + decode(z_pred) - decode(z_last)` (matches persistence at zero drift)
-- **Constraint horizon gating:** PDE/diag apply on `pde_train_horizons` (default `[1]`); Jacobian on `jacobian_train_horizons` (default `[1,5,21]`)
+- **Persistence-residual forecast (LOCKED):** `y_pred = y_last + decode(z_pred) - decode(z_last)` (matches persistence at zero drift). With `use_persistence_residual: true` (paper config), **constraint penalties also use this residual curve**, not linearized `D(z_t)+J δ`. Linearized `tilde y` is only used if persistence residual is off.
+- **Constraint horizon gating:** PDE residual **and** diagnostic penalties (discount monotonicity + forward smoothness) apply on `pde_train_horizons` / `diag_train_horizons` (default `[1]`); Jacobian on `jacobian_train_horizons` (default `[1,5,21]`). Eval still reports all horizons. `sde_pde` / `sde_both` are this bundle, not a standalone PDE residual.
 - **Constraint weights (tuned):** `pde_penalty_weight=0.001`, `jacobian_projection_weight=0.3`
 - **Projection method:** `tangent` (direct decoder-tangent projection) — cleaner geometry gradient than `reencode`
 - **Jacobian warmup:** `jacobian_warmup_epochs=40` to separate from `sde_only` after fit stabilizes
@@ -162,7 +159,7 @@ python experiments/run_full_comparison.py
   - `tangent_move_residual_rmse` = off-tangent component of decoded latent move at `z_last` (lower = move stays in decoder tangent space)
   - Superseded/removed: `manifold_delta_off_manifold_rmse` was algebraically identical to `manifold_off_manifold_rmse` (the `y_prev` term cancels) — do not reintroduce
 - **Paper config file:** `config/paper_best.yaml` — frozen snapshot + reference soft scorecard (Jacobian beats `sde_only` at h=1/5/21). `default.yaml` training hyperparameters match.
-- **Current best model (paper primary):** `reports/best_model/` — frozen scorecard, constraint tables, and `figures/*.png` (Jacobian ahead at h=1/5/21; Stage A recon 0.659). Config snapshot: `reports/best_model/config.yaml`. Retrain with `config/paper_best.yaml`; only replace this folder if a new run clearly wins.
+- **Current best model (paper primary):** `reports/best_model/` — frozen scorecard, constraint tables, and `figures/*.png` (Jacobian ahead at h=1/5/21; Stage A recon 0.659). Config snapshot: `reports/best_model/config.yaml`. Retrain with `config/paper_best.yaml`; only replace this folder if a new run clearly wins. Same-config retrains often flip jac vs `sde_only` at the 4th–5th decimal — do not treat a later flip as a new winner.
 - **Reference soft RMSE (best run, test split):** Stage A recon 0.659; h=1 jac 0.02917 vs only 0.02918; h=5 jac 0.06294 vs only 0.06301; h=21 jac 0.12212 vs only 0.12217 (both beat persistence 0.12375). h=63 extrapolation: only slightly ahead of jac.
 - **Stage A capacity (LOCKED):** `latent_dim=5`, `hidden_dim=256`, `epochs_stage_a=200` — the run where `sde_jacobian` edged `sde_only` at trained horizons. Do not bump `latent_dim`; that dilutes the tangent constraint. The later 384/0.01/300 recon push did not widen RMSE separation and slightly hurt short-horizon RMSE — leave it archived, not default.
 - **Keep `latent_dim` low (5), grow `hidden_dim`/epochs instead:** raising `latent_dim` enlarges the decoder tangent space the Jacobian projects onto, making the constraint *less* restrictive and diluting its effect.
@@ -176,9 +173,9 @@ python experiments/run_full_comparison.py
 ## Suggested next tasks (priority)
 
 1. Save Colab checkpoints from the best soft run to Drive; use `config/paper_best.yaml` to reproduce
-2. Paper tables: soft primary results; hard projection supplementary only
+2. Paper tables: soft primary results from `reports/best_model/`; hard projection supplementary only. Keep `.tex` drafts local (gitignored).
 
 ## References
 
-- Paper PDF in repo root: `Yield_Curve_Dynamics_Pred_Paper.pdf`
 - README: `yield-curve-geometric-sde/README.md`
+- Frozen paper tables/figures: `yield-curve-geometric-sde/reports/best_model/`

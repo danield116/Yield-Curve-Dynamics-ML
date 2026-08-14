@@ -10,8 +10,7 @@ from pathlib import Path
 import pandas as pd
 
 
-# Earliest date where all MVP tenors (incl. 1M) are available on FRED.
-DEFAULT_START_DATE = "2001-07-01"
+DEFAULT_START_DATE = "2001-07-01"  # first date with all 11 tenors (incl. 1M)
 
 
 FRED_SERIES_MAP = {

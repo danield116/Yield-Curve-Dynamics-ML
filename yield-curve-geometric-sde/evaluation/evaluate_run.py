@@ -177,8 +177,7 @@ def evaluate_stage_b_forecast(
             y_pred = decode_fn(z)
 
         if hard_project:
-            # Tangent projection needs decoder Jacobians; enable_grad locally even
-            # though the surrounding forecast roll-out stays no-grad.
+            # Tangent projection needs decoder Jacobians under the outer no_grad.
             with torch.enable_grad():
                 y_pred = project_curve_to_manifold(
                     y_pred,
@@ -303,14 +302,10 @@ def evaluate_run(
         compare_hard_project = bool(eval_cfg.get("compare_hard_project", False))
     hard_method = eval_cfg.get("hard_project_method", "tangent")
 
-    # Primary path: soft forecasts (unless hard_project_at_eval replaces them).
-    # compare_hard_project adds stage_b_*_hard side rows without replacing soft.
+    # Soft forecasts are primary. compare_hard_project adds extra *_hard rows.
+    # hard_project_at_eval replaces soft with hard and skips the companion pass.
     if soft_hard_project:
         project_modes = [True]
-        if compare_hard_project:
-            # Already hard-primary; soft companion would need a second pass without
-            # hard_project_at_eval. Keep simple: hard only when that flag is on.
-            pass
     else:
         project_modes = [False]
         if compare_hard_project:

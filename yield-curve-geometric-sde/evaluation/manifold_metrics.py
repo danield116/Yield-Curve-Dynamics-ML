@@ -1,9 +1,4 @@
-"""Manifold consistency metrics for decoded yield curves.
-
-These metrics isolate the *dynamics* contribution to manifold geometry, rather than
-being dominated by Stage A's static reconstruction gap. This is what makes the
-Jacobian constraint's effect visible (see `manifold_correction_gain`).
-"""
+"""Manifold consistency metrics for decoded yield curves."""
 
 from __future__ import annotations
 
@@ -26,13 +21,7 @@ def manifold_off_manifold_rmse(
     encode_fn,
     decode_fn,
 ) -> float:
-    """RMSE between curves and their re-encode/decode manifold projection.
-
-    NOTE: For persistence-residual forecasts this is dominated by the (constant,
-    model-independent) off-manifold offset of the last observed curve, so absolute
-    values look nearly identical across ablations. Use `manifold_correction_gain`
-    to expose the model-specific contribution.
-    """
+    """RMSE ||y - D(E(y))||. Persistence-residual forecasts are dominated by the last observed offset; compare ablations with `manifold_correction_gain`."""
     return float(math.sqrt(_off_manifold_rmse(y_curves, encode_fn, decode_fn).item()))
 
 
@@ -43,16 +32,7 @@ def manifold_correction_gain(
     encode_fn,
     decode_fn,
 ) -> float:
-    """Net manifold correction the forecast adds over the raw persistence anchor.
-
-    gain = ||y_pred - D(E(y_pred))|| - ||y_persist - D(E(y_persist))||
-
-    `y_persist` (last observed curve) is identical across all Stage B ablations, so
-    subtracting its off-manifold error removes the dominating constant baseline and
-    isolates what the latent dynamics contribute. Negative = the forecast is pulled
-    *closer* to the decoder manifold than naive persistence (Jacobian should be the
-    most negative).
-    """
+    """off_manifold(y_pred) - off_manifold(y_persist). Negative = closer to the manifold than persistence."""
     e_pred = torch.sqrt(_off_manifold_rmse(y_pred, encode_fn, decode_fn))
     e_persist = torch.sqrt(_off_manifold_rmse(y_persist, encode_fn, decode_fn))
     return float((e_pred - e_persist).item())
@@ -64,12 +44,7 @@ def tangent_move_residual_rmse(
     decode_fn,
     eps: float = 1e-5,
 ) -> float:
-    """Off-tangent component of the decoded latent move at z_last.
-
-    Decodes the forecast move dy = D(z_pred) - D(z_last), projects it onto the decoder
-    tangent space span(J(z_last)), and returns the residual RMSE. Measures how much of
-    the predicted curve move leaves the manifold's local tangent plane.
-    """
+    """RMSE of dy = D(z_pred)-D(z_last) after removing the tangent component at z_last."""
     from constraints.jacobian_projection import decoder_jacobian, project_delta_to_tangent
 
     with torch.enable_grad():

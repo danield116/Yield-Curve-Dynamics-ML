@@ -1,11 +1,11 @@
-"""Conditional VAE scaffold for curve + context conditioning."""
+"""Conditional VAE for curve + LevelScript (or other) context."""
 
 import torch
 import torch.nn as nn
 
 
 class CVAE(nn.Module):
-    """CVAE where condition could include level component and lagged info."""
+    """CVAE with condition vector (e.g. LevelScript level)."""
 
     def __init__(self, n_tenors: int, cond_dim: int, latent_dim: int = 3, hidden_dim: int = 64) -> None:
         super().__init__()
@@ -22,7 +22,6 @@ class CVAE(nn.Module):
         )
 
     def encode(self, x: torch.Tensor, c: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        # x: [B, N], c: [B, C]
         h = self.encoder(torch.cat([x, c], dim=-1))
         return self.mu_head(h), self.logvar_head(h)
 

@@ -11,13 +11,7 @@ import pandas as pd
 
 @dataclass
 class SplitData:
-    """Container for chronological splits.
-
-    Shapes:
-    - train: [T_train, N_tenors]
-    - val:   [T_val, N_tenors]
-    - test:  [T_test, N_tenors]
-    """
+    """Chronological train/val/test DataFrames."""
 
     train: pd.DataFrame
     val: pd.DataFrame
@@ -46,11 +40,8 @@ def align_and_impute(df, drop_incomplete_rows=True):
     if out.empty:
         raise ValueError("No complete rows remain after dropping incomplete data.")
 
-    # Reindex to business-day calendar to create a consistent panel.
     full_bday_index = pd.date_range(start=out.index.min(), end=out.index.max(), freq="B")
     out = out.reindex(full_bday_index)
-
-    # Fill only short missing-business-day gaps.
     out = out.interpolate(method="time", limit_direction="both")
     out = out.ffill().bfill()
     return out
@@ -86,14 +77,7 @@ def robust_scale(train, val, test):
 
 
 def apply_levelscript(curves, level_tenor_index=3):
-    """Optional decomposition into shape + level.
-
-    Inputs:
-    - curves shape: [T, N_tenors]
-    Returns:
-    - shape component: [T, N_tenors]
-    - level component: [T, 1]
-    """
+    """LevelScript: shape = curve - level, level = one tenor [T, 1]."""
     level = curves[:, [level_tenor_index]]
     shape = curves - level
     return shape, level

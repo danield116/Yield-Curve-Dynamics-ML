@@ -1,6 +1,4 @@
-"""PyTorch dataset into tensors for yield-curve training.
-
-"""
+"""PyTorch datasets and tensors for yield-curve training."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,11 +20,7 @@ def _read_frame(path):
 
 @dataclass
 class SplitTensors:
-    """one tensor per split
-    - train: [T_train, N_tenors]
-    - val:   [T_val, N_tenors]
-    - test:  [T_test, N_tenors]
-    """
+    """Train/val/test curve tensors, each [T, N_tenors]."""
 
     train: torch.Tensor
     val: torch.Tensor
@@ -161,15 +155,10 @@ def load_latent_splits(latent_dir):
 
 
 def maybe_add_levelscript_condition(curves, level_tenor_index=3):
-    """Return (shape_curves, level_cond) for CVAE-style conditioning.
-
-    - shape_curves: [T, N_tenors]
-    - level_cond:   [T, 1]
-    """
+    """Return (shape_curves [T, N], level_cond [T, 1]) for CVAE conditioning."""
     if not (0 <= level_tenor_index < curves.shape[1]):
         raise ValueError(f"level_tenor_index out of range for N={curves.shape[1]}.")
 
-    # level = one tenor (default: 1Y if standard ordering)
     level = curves[:, [level_tenor_index]]
     shape = curves - level
     return shape, level

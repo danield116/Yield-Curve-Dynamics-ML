@@ -1,4 +1,4 @@
-"""SDE integration helpers (placeholder module)."""
+"""SDE integration helpers."""
 
 import torch
 

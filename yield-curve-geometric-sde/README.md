@@ -1,52 +1,58 @@
 # Geometric No-Arbitrage Yield Curve Dynamics
 
-Backbone repository for a quantitative finance / machine learning project:
+Two-stage yield-curve forecasting:
 
-**Geometric No-Arbitrage Yield Curve Dynamics with Student-t CVAEs, Neural SDEs, and Jacobian Projection**
+1. **Stage A** — Student-t CVAE manifold (LevelScript: level = 1Y, shape = curve − level)
+2. **Stage B** — Neural SDE latent dynamics with optional constraint penalties
 
-## Scope
+Jacobian projection is a geometric constraint on the decoder manifold, not a competing dynamics model.
 
-This scaffold is intentionally lightweight and pseudocode-oriented.  
-It contains:
-- module layout and research pipeline structure,
-- function/class skeletons,
-- docstrings, TODO blocks, and tensor shape comments.
+## Ablations
 
-It does **not** contain full production implementations yet.
+| Ablation | Constraints |
+|----------|-------------|
+| `sde_only` | none |
+| `sde_pde` | no-arbitrage PDE residual + discount/forward diagnostics |
+| `sde_jacobian` | decoder-Jacobian manifold projection |
+| `sde_both` | PDE + Jacobian |
 
-## Research Objective
+Paper-primary frozen results (soft forecasts) are in `reports/best_model/`. Retrain with `config/paper_best.yaml`.
 
-Model and forecast yield-curve dynamics with:
-1. Stage A: latent manifold learning with VAE/CVAE variants (including Student-t + LevelScript),
-2. Stage B: latent continuous-time dynamics with Neural SDE,
-3. constraint ablations:
-   - unconstrained SDE,
-   - SDE + no-arbitrage PDE penalty,
-   - SDE + decoder-Jacobian projection,
-   - SDE + PDE + Jacobian.
+## Data
 
-## Data (MVP)
+FRED constant-maturity UST yields: `1M, 3M, 6M, 1Y, 2Y, 3Y, 5Y, 7Y, 10Y, 20Y, 30Y`.  
+Default start: `2001-07-01`. Chronological 70/15/15 split, train-only robust scaling.
 
-FRED constant-maturity treasury yields:
-`1M, 3M, 6M, 1Y, 2Y, 3Y, 5Y, 7Y, 10Y, 20Y, 30Y`
+Raw/processed data are gitignored.
 
-## Milestones
-
-1. Load/simulate yields, train basic VAE, evaluate reconstruction.
-2. Add PCA + VAR baseline.
-3. Add Student-t VAE and LevelScript.
-4. Add latent Neural SDE dynamics.
-5. Add no-arbitrage diagnostics/PDE penalty.
-6. Add Jacobian projection and run full ablation.
-
-## Quick Start
+## Quick start
 
 ```bash
+cd yield-curve-geometric-sde
 pip install -r requirements.txt
-python experiments/run_full_comparison.py --config config/default.yaml
+
+python data/download_fred_yields.py
+python data/preprocess_curves.py --levelscript
+
+python training/train_stage_a.py --config config/paper_best.yaml
+python training/train_stage_b.py --config config/paper_best.yaml --ablation sde_jacobian
+
+python evaluation/evaluate_run.py --split test --output-dir reports/comparison
 ```
 
-## Notes
+**Colab:** open `notebooks/colab_train.ipynb` and set the runtime to **GPU**.
 
-- The initial files are pseudocode-heavy for planning and rapid iteration.
-- Replace TODO blocks with concrete implementations incrementally.
+## Paper-primary config
+
+Locked in `config/paper_best.yaml` (same training hyperparameters as `config/default.yaml`):
+
+- `latent_dim=5`, `hidden_dim=256`, `epochs_stage_a=200`, `epochs_stage_b=400`
+- Persistence-residual forecast: `y_pred = y_last + decode(z_pred) - decode(z_last)`
+- Jacobian: `projection_method=tangent`, weight `0.3`, warmup 40 epochs
+- Soft penalties during training; hard projection is eval-only and non-primary
+
+Do not bump `latent_dim`: a larger latent space enlarges the decoder tangent plane and weakens the Jacobian constraint.
+
+## Repo notes
+
+Paper drafts (`.tex`, local PDFs) and unrelated notebooks stay out of git. Agent handoff lives in the repo-root `AGENTS.md`.

@@ -1,21 +1,14 @@
-"""Standard VAE scaffold for yield-curve manifold learning."""
+"""VAE for yield-curve manifold learning."""
 
 import torch
 import torch.nn as nn
 
 
 class VAE(nn.Module):
-    """Basic VAE.
-
-    Shapes:
-    - x: [batch, n_tenors]
-    - z: [batch, latent_dim]
-    - x_hat: [batch, n_tenors]
-    """
+    """x: [B, n_tenors] -> z: [B, latent_dim] -> x_hat: [B, n_tenors]."""
 
     def __init__(self, n_tenors: int, latent_dim: int = 3, hidden_dim: int = 64) -> None:
         super().__init__()
-        # TODO: improve architecture depth/regularization.
         self.encoder = nn.Sequential(
             nn.Linear(n_tenors, hidden_dim),
             nn.ReLU(),

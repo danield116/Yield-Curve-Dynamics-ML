@@ -36,20 +36,13 @@ def arbitrage_diagnostic_loss(y, tau):
 
 
 def compute_dP_dtau(y, p, tau):
-    """Maturity derivative at fixed latent state.
-
-    For P_i = exp(-y_i * tau_i), dP_i/dtau_i = -y_i * P_i.
-    """
+    """dP/dtau = -y * P for P = exp(-y * tau)."""
     tau = tau if tau.ndim == 2 else tau.unsqueeze(0).expand_as(y)
     return -y * p
 
 
 def compute_grad_z_p(z, tau, decoder):
-    """Gradient of bond prices w.r.t. latent state.
-
-    Returns:
-    - grad_z_p: [B, N_tenors, latent_dim]
-    """
+    """dP/dz, shape [B, N_tenors, latent_dim]."""
     z = z.detach().requires_grad_(True)
     p = bond_price_from_decoder(z, tau, decoder)
     batch_size, n_tenors = p.shape
@@ -69,12 +62,7 @@ def compute_grad_z_p(z, tau, decoder):
 
 
 def compute_hessian_trace_term(z, tau, decoder, sigma, tenor_indices=None):
-    """Trace term: 0.5 * Tr[sigma sigma^T Hess_z(P)].
-
-    MVP implementation:
-    - assumes diagonal diffusion sigma: [B, latent_dim]
-    - optionally evaluates only selected tenor indices for cost control
-    """
+    """0.5 * Tr[sigma sigma^T Hess_z(P)] with diagonal diffusion; optional tenor subset."""
     if tenor_indices is None:
         tenor_indices = [0]
 

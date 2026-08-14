@@ -1,6 +1,4 @@
-"""DataLoader builders for train/val/test splits.
-
-"""
+"""DataLoader builders for train/val/test splits."""
 
 from dataclasses import dataclass
 
