@@ -11,17 +11,17 @@ Jacobian projection is a geometric constraint on the decoder manifold, not a com
 
 | Ablation | Constraints |
 |----------|-------------|
-| `sde_only` | none |
-| `sde_pde` | no-arbitrage PDE residual + discount/forward diagnostics |
-| `sde_jacobian` | decoder-Jacobian manifold projection |
-| `sde_both` | PDE + Jacobian |
+| `sde_only` | none (drift network; diffusion is not in the loss) |
+| `sde_pde` | curve-shape bundle: simplified PDE residual + discount monotonicity + forward smoothness, trained at h=1 |
+| `sde_jacobian` | ridge decoder-tangent penalty at h=1, 5, 21 |
+| `sde_both` | bundle + Jacobian (frozen scorecard matches `sde_pde`; do not treat as a separate result) |
 
 Paper-primary frozen results (soft forecasts) are in `reports/best_model/`. Retrain with `config/paper_best.yaml`.
 
 ## Data
 
 FRED constant-maturity UST yields: `1M, 3M, 6M, 1Y, 2Y, 3Y, 5Y, 7Y, 10Y, 20Y, 30Y`.  
-Default start: `2001-07-01`. Chronological 70/15/15 split, train-only robust scaling.
+Download starts `2001-07-01`; the cleaned panel begins `2001-07-31`. Chronological 70/15/15 split, train-only robust scaling, then LevelScript (1Y level). Business-day reindex fills holidays in every split. 2002–2006 30Y values in FRED are source estimates, not a hole filled by this repo.
 
 Raw/processed data are gitignored.
 
